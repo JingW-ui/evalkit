@@ -1,0 +1,12 @@
+{
+  "task_id": "agent_001",
+  "level": "L2",
+  "skill_expected": null,
+  "query": "（纯 agent 评测的示例任务，不依赖任何 skill）",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": ["这里放该任务的成功证据词"],
+    "threshold": 1
+  },
+  "note": "纯 agent 评测：skill_expected 为 null，代表被测方不加载任何 skill，用裸能力完成任务。用于与有 skill 的会话做对比，评估 skill 的增益。"
+}

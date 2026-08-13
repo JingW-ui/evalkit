@@ -1,0 +1,11 @@
+{
+  "pricing_per_1k": {
+    "input": 0.003,
+    "output": 0.015,
+    "cache_read": 0.0015,
+    "cache_write": 0.006
+  },
+  "default_model": "claude-sonnet-5",
+  "default_n": 3,
+  "step_timeout_s": 300
+}

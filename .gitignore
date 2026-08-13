@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 评测输出产物（每次运行生成，不入库）
+results/*.json
+results/*.md
+results/*.jsonl
+
+# 运行沙盒（临时产物）
+sandbox/
+
+# 本地配置覆盖
+settings.local.json
