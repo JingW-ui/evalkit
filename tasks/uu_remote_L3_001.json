@@ -1,0 +1,12 @@
+{
+  "task_id": "uu_remote_L3_001",
+  "level": "L3",
+  "skill_expected": "uu-remote-auto",
+  "query": "获取一下可用PC设备列表，然后为第三台设备安装uu远程并配置验证码写入dk",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": ["设备 ID", "验证码", "DK 备注写入成功", "安装 UU 远程"],
+    "threshold": 3
+  },
+  "note": "uu-remote-auto 完整远程 Windows 设备部署（连接→预检→探测→安装→配置验证明码→写入DK），对应历史日志 625d0eda-7662-42c8-9091-49603b17e203"
+}
