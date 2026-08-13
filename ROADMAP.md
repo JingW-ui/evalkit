@@ -1,8 +1,9 @@
-# Claude Code + Skill 评测体系 —— 后续开发计划（Roadmap）
+# evalkit —— AI Agent 评测体系后续开发计划（Roadmap）
 
 > 状态：进行中。本文档记录评测体系的演进方向，不随单次提交过期。
 > 当前已跑通：离线分析单个纯 G66 部署会话（`replay.py`），6 个宏观指标。
-> 已确认的架构判定：**入口用 Skill 方式（CLI 脚本 + 编排 skill），不做 UI/插件。**
+> 已确认的架构判定：**入口用 Skill 编排方式（CLI 脚本 + 编排 skill），不做 UI/插件。**
+> 当前数据来源：**Claude Code** 会话日志（JSONL）。多 Agent 后端接入见第 9 节。
 
 ---
 
@@ -145,3 +146,38 @@ VALIDATORS = {
 
 **Skill 方式**：`eval/` 目录下稳定的 CLI 脚本 + 未来的 `eval-runner` 编排 skill。
 任何评测需求变成一句 `/eval-runner --skill G66 --level L3`，与使用其他 skill 心智一致。
+
+---
+
+## 九、多 Agent 后端支持（后续探索）
+
+**现状**：数据来源是 Claude Code 的会话日志（JSONL）。
+
+**目标**：评测框架与被测 Agent 解耦，后续支持 codemaker、Codex 等不同类型的 Agent。
+
+**待探索点（具体日志的保存与命名规则因 Agent 而异）**：
+
+| Agent | 日志形态 | 命名/路径规则 | 待确认点 |
+|-------|---------|--------------|---------|
+| Claude Code | JSONL（`~/.claude/projects/{slug}/{sessionId}.jsonl`） | sessionId 为主，配套 subagents/ tool-results/ | 已探明 |
+| codemaker | ？（待探索） | ？ | 日志形态、事件类型、工具调用记录方式 |
+| Codex | ？（待探索） | ？ | session 持久化方式、S 日志结构 |
+
+**抽象方向**：引入"日志适配器"（Log Adapter）层，屏蔽不同 Agent 的日志形态差异，把各家日志统一解析成 `evalkit` 内部的中间结构（`skill_loaded` / `tool_sequence` / `usage` / `assistant_text`）。
+
+```python
+# 目标：日志适配器注册表，与校验器注册表同理
+LOG_ADAPTERS = {
+    "claude_code": ClaudeCodeAdapter,   # 已实现（parser.py）
+    "codemaker":   CodemakerAdapter,    # 待探索
+    "codex":       CodexAdapter,        # 待探索
+}
+```
+
+**接入一个新 Agent 的步骤**：
+1. 探明该 Agent 的日志保存路径 + 命名规则 + 事件结构
+2. 写一个 Adapter，把原始日志转成 evalkit 中间结构
+3. 在 LOG_ADAPTERS 注册，task 里加 `agent: "xxx"` 字段指定后端
+
+> 本节的优先级低于 L1-L4 主体，属于"确认框架稳定后"的扩展项。
+
