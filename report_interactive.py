@@ -195,7 +195,7 @@ def render_html(data: dict) -> str:
       '<div class="stat"><div class="stat-label">平均 Token/会话</div><div class="stat-value">' + fmtT(s.avg_tokens) + '</div></div>' +
     '</div>';
 
-    html += '<div class="panel"><h3>按 Skill 分布（点击下钻）</h3>';
+    html += '<div class="panel"><h3>按 Skill 分布</h3>';
     const maxV = DATA.skills.length ? DATA.skills[0].total_tokens : 1;
     DATA.skills.forEach((sk, i) => {
       const w = Math.max(sk.total_tokens / maxV * 100, 1);
