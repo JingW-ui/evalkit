@@ -52,13 +52,16 @@ def _parse_ts(ts):
 
 
 def _is_real_user(content):
-    """判定一条 user 消息是否为真实任务指令（排除 / 开头、< 开头、空）。"""
+    """判定一条 user 消息是否为真实任务指令（排除 / 开头、< 开头、空、Skill 注入等系统消息）。"""
     if not isinstance(content, str):
         return False
     c = content.strip()
     if not c:
         return False
     if c.startswith("/") or c.startswith("<"):
+        return False
+    # Skill 预加载注入的系统消息（非真实用户指令）
+    if c.startswith("Base directory for this skill:"):
         return False
     return True
 
@@ -150,9 +153,10 @@ def scan_single_session(jsonl_path):
             if t == "user":
                 content = obj.get("message", {}).get("content", "")
                 if _is_real_user(content):
-                    # 结束上一个任务的耗时
+                    # 结束上一个任务：用它的最后一条 assistant 时间戳（而非本条 user 时间），
+                    # 否则跨夜 / 跨任务的等待空窗会被误算进上一个任务
                     if cur_task is not None:
-                        cur_task["end_ts"] = ts
+                        cur_task["end_ts"] = cur_task.get("_last_assistant_ts") or ts
                     cur_task = {
                         "query": content.strip(),
                         "start_ts": ts,
@@ -167,6 +171,7 @@ def scan_single_session(jsonl_path):
                         "stop_reason": None,         # 该任务最后一条 assistant 的 stop_reason
                         "has_final_text": False,     # 该任务是否有最终 text 输出（非工具调用）
                         "_events": [],               # 该任务区间内的事件时间戳 (epoch_s, type)
+                        "_last_assistant_ts": None,  # 该任务最后一条 assistant 消息时间戳
                     }
                     tasks.append(cur_task)
 
@@ -175,6 +180,10 @@ def scan_single_session(jsonl_path):
                 model = msg.get("model", "")
                 if model:
                     model_usage[model] = model_usage.get(model, 0) + 1
+
+                # 记录该任务最后一条 assistant 时间戳（用于精确界定任务结束，避免跨夜空窗）
+                if cur_task is not None:
+                    cur_task["_last_assistant_ts"] = ts
 
                 # stop_reason + 最终 text（用于任务完成判定）
                 sr = msg.get("stop_reason", "")
@@ -269,9 +278,9 @@ def scan_single_session(jsonl_path):
             if ets is not None and cur_task is not None:
                 cur_task["_events"].append((ets, t))
 
-    # 收尾：最后一个任务
+    # 收尾：最后一个任务（用它的最后一条 assistant 时间戳，若全程无 assistant 则退回 ts_last）
     if cur_task is not None:
-        cur_task["end_ts"] = ts_last
+        cur_task["end_ts"] = cur_task.get("_last_assistant_ts") or ts_last
 
     # ===== TaskCreate/TaskUpdate 配对（顺序对应） =====
     # TaskCreate 无 id，TaskUpdate 的 task_id 是 "1"~"N"，按出现顺序一一对应
@@ -347,9 +356,10 @@ def scan_single_session(jsonl_path):
         t0 = _parse_ts(tk["start_ts"])
         t1 = _parse_ts(tk["end_ts"])
         tk["duration_s"] = (t1 - t0) if (t0 is not None and t1 is not None) else None
-        # 等待人输入：任务区间内相邻事件间隔 > 阈值 的空窗总和
+        # 等待人输入：任务区间 [start_ts, end_ts] 内「无模型活动的空闲空窗」总和。
+        # 只在区间内统计，且排除落在 end_ts 之后的事件（那段属于下个任务或跨夜空窗）。
         wait_s = 0.0
-        evs = tk.get("_events", [])
+        evs = [e for e in tk.get("_events", []) if t0 is not None and t1 is not None and t0 <= e[0] <= t1]
         for i in range(1, len(evs)):
             gap = evs[i][0] - evs[i - 1][0]
             if gap > WAIT_GAP_S:
@@ -357,6 +367,7 @@ def scan_single_session(jsonl_path):
         tk["wait_s"] = wait_s
         tk["active_s"] = (tk["duration_s"] - wait_s) if tk["duration_s"] is not None else None
         del tk["_events"]  # 不暴露内部时间戳
+        tk.pop("_last_assistant_ts", None)  # 不暴露内部字段
 
     # ===== 任务完成判定（启发式） =====
     # 判据：has_final_text（输出了最终结论文本）优先视为「已完成」；
@@ -533,6 +544,86 @@ def scan_airlab_log(path):
 
     total_tool_calls = sum(tool_dist.values())
 
+    # --- 子任务解析（TaskCreate / TaskUpdate） ---
+    # pod 文本日志里 TaskCreate 行无 taskId，TaskUpdate 行含 taskId "1"~"N"，
+    # 与 JSONL 相同：靠「出现顺序」配对（第 i 个 TaskCreate ← taskId = str(i+1)）。
+    creates = []            # 顺序的 TaskCreate（subject/description/ts）
+    updates = []            # TaskUpdate（task_id/status/ts）
+    for ln in lines:
+        m = re.match(r"\[(\d\d:\d\d:\d\d)\] \[CC 🔧 (TaskCreate|TaskUpdate)\] (\{.*\})", ln)
+        if not m:
+            continue
+        ts = m.group(1)
+        kind = m.group(2)
+        try:
+            param = json.loads(m.group(3))
+        except json.JSONDecodeError:
+            continue
+        if kind == "TaskCreate":
+            creates.append({
+                "subject": param.get("subject", ""),
+                "description": param.get("description", ""),
+                "ts": ts,
+            })
+        else:
+            updates.append({
+                "task_id": param.get("taskId", param.get("id", "")),
+                "status": param.get("status", ""),
+                "ts": ts,
+            })
+
+    # 配对：第 idx 个 TaskCreate（0-based）对应 taskId = idx+1 的 TaskUpdate
+    update_by_order = {}
+    for u in updates:
+        try:
+            order = int(str(u["task_id"]))
+        except (ValueError, TypeError):
+            order = None
+        update_by_order[order] = u
+
+    def _hm_to_s(ts):
+        """HH:MM:SS → 秒（无日期，按当日）；失败返回 None。"""
+        try:
+            h, mi, s = ts.split(":")
+            return int(h) * 3600 + int(mi) * 60 + int(s)
+        except (ValueError, AttributeError):
+            return None
+
+    task_subitems = []
+    for idx, c in enumerate(creates):
+        target_order = idx + 1
+        status = "pending"
+        start_ts = c["ts"]
+        completed_ts = None
+        for order, u in update_by_order.items():
+            if order == target_order:
+                if u["status"] == "in_progress":
+                    status = "in_progress"
+                    start_ts = u["ts"]
+                elif u["status"] == "completed":
+                    status = "completed"
+                    completed_ts = u["ts"]
+                elif u["status"] == "blocked":
+                    status = "blocked"
+        dur = None
+        t0 = _hm_to_s(start_ts)
+        t1 = _hm_to_s(completed_ts) if completed_ts else None
+        if t0 is not None and t1 is not None:
+            dur = t1 - t0
+            if dur < 0:
+                dur = None  # 跨天或乱序，退化为不显示
+        task_subitems.append({
+            "subject": c["subject"],
+            "description": c["description"],
+            "status": status,
+            "duration_s": dur,
+            "belongs_to": prompt,  # 单任务，全部归属该指令
+            "created_ts": c["ts"],
+        })
+
+    blocks = [s for s in task_subitems if s["status"] == "blocked"]
+    completed_sub = sum(1 for s in task_subitems if s["status"] == "completed")
+
     # --- skill 事件 ---
     skill_events = []
     if skill_cfg:
@@ -621,15 +712,15 @@ def scan_airlab_log(path):
             "cache_write": token_cache_write, "output": token_output,
         },
         "tasks": [task] if prompt else [],
-        "task_subitems": [],        # pod 日志无 TaskCreate/TaskUpdate
+        "task_subitems": task_subitems,
         "skill_events": skill_events,
         "skill_triggered_tasks": 1 if skill_cfg else 0,
         "skill_script_tasks": 1 if script_skills else 0,
         "skill_used_tasks": skill_used_tasks,
         "task_count": 1 if prompt else 0,
-        "blocks": [],
-        "completed_sub": 0,
-        "total_sub": 0,
+        "blocks": blocks,
+        "completed_sub": completed_sub,
+        "total_sub": len(task_subitems),
         "human_interventions": human_interventions,
         "total_human_interventions": len(human_interventions),
         # 附加信息（airlab 专属）

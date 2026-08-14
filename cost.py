@@ -141,8 +141,11 @@ def calibrate_markup(model: str, actual_cost: float, tokens: dict, pricing: dict
     if theo <= 0 or actual_cost <= 0:
         return None
     markup = actual_cost / theo
-    _markup_cache.setdefault(model, []).append(markup)
-    _save_markup_samples()
+    samples = _markup_cache.setdefault(model, [])
+    # 去重：已有近似相同值（浮点容差）说明是同一份日志重复分析，跳过，避免样本被重复计数拉偏中位数
+    if not any(abs(markup - s) < 1e-6 for s in samples):
+        samples.append(markup)
+        _save_markup_samples()
     return markup
 
 
