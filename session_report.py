@@ -24,6 +24,11 @@ try:
 except ImportError:
     cost_mod = None
 
+try:
+    import adjudicator as adj
+except ImportError:
+    adj = None
+
 
 # ===== 颜色主题（GitHub 风格：绿色为主，仅少量红色点缀） =====
 ACCENT = "#2da44e"        # GitHub 绿，主强调色
@@ -440,6 +445,9 @@ def scan_single_session(jsonl_path):
         else:
             tk["completion"] = "interrupted"
             tk["completion_reason"] = "以工具调用结尾，未见最终结论"
+        # JSONL 路径无纯文本，规则命中/异常走统一字段，供渲染层一致访问
+        tk["anomalies"] = []
+        tk["rule_hits"] = {"anomalies": [], "conflicts": [], "done_markers_matched": []}
 
     # 会话总耗时
     session_duration = None
@@ -512,6 +520,7 @@ def scan_single_session(jsonl_path):
         "total_human_interventions": len(human_interventions),
         "user_interrupts": user_interrupts,
         "total_user_interrupts": len(user_interrupts),
+        "rule_hits": {"anomalies": [], "conflicts": [], "done_markers_matched": []},
         "cost_analysis": cost_analysis,
     }
 
@@ -731,29 +740,32 @@ def scan_airlab_log(path):
                 "ts": "",
             })
 
-    # --- 结果（完成判定） ---
-    # 关键洞察：airLab pod 日志里「错误/失败」常出现在探测命令正常返回（如「错误：没有找到进程」= 正常「未安装」），
-    # 不能作为失败信号。真正的「崩溃」只有 Traceback 堆栈；「Exception: ... success」是 framework 提前结束但结果可能已成功。
-    done_flag = ("CCAgent.run done" in txt)
-    crash_flag = ("Traceback" in txt)
-    result_flag = any(k in txt for k in ("任务已完成", "CC RESULT", "写入 DK 备注", "DK 备注写入", "写 DK 成功", "改验证码", "验证码"))
-    # 完成 = 有正常收尾标记或成果落地，且无 Traceback 真崩溃
-    completed = (not crash_flag) and (done_flag or result_flag)
-    # 兜底：若无崩溃且子任务全部 completed，也视为完成
-    if task_subitems and not completed:
-        completed = (not crash_flag) and all(s["status"] == "completed" for s in task_subitems)
-    final_text = done_flag or result_flag
-
-    # --- 异常信号记录（不以这些判「失败」，仅作为附加信号供后续 agent 判定参考） ---
-    anomalies = []
-    if "Autocompact is thrashing" in txt:
-        anomalies.append("Autocompact thrashing（context 反复 refill，可能有过大 tool output）")
-    if "Exception" in txt:
-        anomalies.append("出现 Exception 字样（可能是 framework 提前结束，见结尾）")
-    if "提前结束" in txt or "提前结束" in txt:
-        anomalies.append("CC 提前结束")
-    if "Traceback" in txt:
-        anomalies.append("Traceback 崩溃堆栈")
+    # --- 结果（完成判定 + 异常识别）：交裁决器（rules.yaml 驱动），脚本不再硬编码 keyword ---
+    if adj is not None:
+        verdict, reason = adj.adjudicate_completion(txt, task_subitems, kind="airlab")
+        anomalies = adj.detect_anomalies(txt)
+        rule_hits = adj.rule_hits(
+            txt,
+            {"tasks": [{"query": prompt, "completion": verdict}], "task_subitems": task_subitems},
+        )
+    else:
+        # 回退：无 adjudicator 时保守判定
+        verdict = "completed" if ("CCAgent.run done" in txt) else "interrupted"
+        reason = "收尾标记" if verdict == "completed" else "无收尾标记"
+        anomalies = []
+        rule_hits = {"anomalies": [], "conflicts": [], "done_markers_matched": []}
+    # 把 verdict 归一为三态：completed / completed_with_anomaly / interrupted
+    # (渲染层已有三段对应：completed=✓、partial◐、interrupted✗；这里额外引入
+    #  completed_with_anomaly 由渲染层映射到 ⚠ badge)
+    if verdict == "completed_with_anomaly":
+        completion_state = "completed_with_anomaly"
+        final_text = True
+    elif verdict == "completed":
+        completion_state = "completed"
+        final_text = True
+    else:
+        completion_state = "interrupted"
+        final_text = False
 
     # --- 组装同构 dict ---
     # 单任务
@@ -774,9 +786,10 @@ def scan_airlab_log(path):
         "human_interventions": len(human_interventions),
         "stop_reason": "end_turn" if final_text else "unknown",
         "has_final_text": final_text,
-        "completion": "completed" if completed else "interrupted",
-        "completion_reason": ("正常收尾（CCAgent.run done）且成果落地" if completed else "未见正常收尾或成果落地信号"),
+        "completion": completion_state,
+        "completion_reason": reason,
         "anomalies": anomalies,
+        "rule_hits": rule_hits,
     }
 
     model_usage = {}
@@ -826,6 +839,7 @@ def scan_airlab_log(path):
         "user_interrupts": [],
         "total_user_interrupts": 0,
         "anomalies": anomalies,
+        "rule_hits": rule_hits,
         # 附加信息（airlab 专属）
         "cost_usd": cost,
         "turns": turns,
@@ -1121,8 +1135,8 @@ def render_html(data):
 
   // ===== 任务列表（按用户对话）· 密集行 =====
   h += '<div class="panel"><h2>任务列表（按用户对话）</h2>';
-  const COMP_LABEL = {{'completed': '✓ 已完成', 'partial': '◐ 部分完成', 'interrupted': '✗ 疑似中断'}};
-  const COMP_CLASS = {{'completed': 'badge-skill', 'partial': 'badge-noskill', 'interrupted': 'badge-blocked'}};
+  const COMP_LABEL = {{'completed': '✓ 已完成', 'completed_with_anomaly': '⚠ 完成但有异常', 'partial': '◐ 部分完成', 'interrupted': '✗ 疑似中断'}};
+  const COMP_CLASS = {{'completed': 'badge-skill', 'completed_with_anomaly': 'badge-blocked', 'partial': 'badge-noskill', 'interrupted': 'badge-blocked'}};
   data.tasks.forEach((tk, i) => {{
     h += '<div class="task-card">';
     h += '<div class="q">#' + (i+1) + ' ' + esc(tk.query) + '</div>';
@@ -1207,6 +1221,32 @@ def render_html(data):
       h += '<div class="meta">' + fmtTime(it.ts) + '</div>';
       h += '</div>';
     }});
+  }}
+  h += '</div></details>';
+
+  // 规则命中（rules.yaml 驱动）
+  const rh = data.rule_hits || {{anomalies: [], conflicts: [], done_markers_matched: []}};
+  const rhCount = (rh.anomalies ? rh.anomalies.length : 0) + (rh.conflicts ? rh.conflicts.length : 0);
+  h += '<details class="section"><summary>规则命中（rules.yaml） <span class="cnt">' + rhCount + ' 项</span></summary><div class="detail-body">';
+  if (rhCount === 0) {{
+    h += '<div class="empty">未命中任何异常信号 / 矛盾场景</div>';
+  }} else {{
+    if (rh.anomalies && rh.anomalies.length) {{
+      h += '<div class="muted" style="font-size:11px;margin-bottom:4px">异常信号命中：</div>';
+      rh.anomalies.forEach(a => {{
+        h += '<div class="task-card" style="margin-bottom:6px"><div class="q">⚠ ' + esc(a) + '</div></div>';
+      }});
+    }}
+    if (rh.conflicts && rh.conflicts.length) {{
+      h += '<div class="muted" style="font-size:11px;margin:8px 0 4px">矛盾场景命中：</div>';
+      rh.conflicts.forEach(c => {{
+        h += '<div class="task-card" style="margin-bottom:6px"><div class="q">🔀 ' + esc(c) + '</div></div>';
+      }});
+    }}
+    if (rh.done_markers_matched && rh.done_markers_matched.length) {{
+      h += '<div class="muted" style="font-size:11px;margin:8px 0 4px">完成标记命中：</div>';
+      h += '<div class="muted" style="font-size:11px">' + rh.done_markers_matched.map(m => esc(m)).join(' · ') + '</div>';
+    }}
   }}
   h += '</div></details>';
 

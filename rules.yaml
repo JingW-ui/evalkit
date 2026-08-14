@@ -32,7 +32,7 @@ completion_signals:
     - "错误：没有找到进程"          # 探测命令正常返回（= 未安装），非失败
     - "Exception: ... success"    # framework 提前结束但结果可能已成功
 
-# ---- 异常信号词 → 归因 ----
+# ---- 异常信号词 → 归因（真正的「异常/不健康」信号，非必然现象） ----
 anomaly_signals:
   - signal: "Autocompact is thrashing"
     meaning: "context 反复 refill，可能有超大的单条 tool output / 文件读取"
@@ -42,20 +42,13 @@ anomaly_signals:
     meaning: "出现 Exception 字样，需结合结尾判断是崩溃还是框架提前结束"
   - signal: "Traceback"
     meaning: "真正的崩溃堆栈（Python 报错）"
-  - signal: "compact_boundary / session continued"
-    meaning: "context 紧凑续，可能丢子任务 TaskUpdate 状态标记 → 子任务全 pending 但任务实际完成"
-  - signal: "子任务全 pending 但任务 completed"
-    meaning: "矛盾信号：成果已落地但子任务清单无状态更新，大概率是 context 重续丢失标记，非任务没做"
 
 # ---- 完成/中断矛盾场景（脚本结论 vs 真实情形的对照提示） ----
 conflict_scenarios:
   - pattern: "completed + 子任务 0/全部 pending"
     explanation: "成果落地但子任务无状态更新，多为 context 反复 compact 丢失 TaskUpdate 标记，需读全量确认归因，不能仅凭 pending 判失败"
-  - pattern: "完成但有多条 compact_boundary"
-    explanation: "执行过程不健康（context 反复续绕），即使结果成功也应在报告标注「完成但过程有异常」"
-
-# ---- 历史误判修订记录（脚本踩过的坑） ----
-misuse_revisions:
+  - pattern: "完成但子任务部分未闭环"
+    explanation: "父任务 completed 但子任务清单未全部 completed，可能有 in_progress/pending 残留"
 
 # ---- 历史误判修订记录（脚本踩过的坑） ----
 misuse_revisions:
@@ -68,3 +61,6 @@ misuse_revisions:
   - date: "2026-08-14"
     before: "用 'Exception' in txt 判崩溃"
     after: "Exception: success 是框架提前结束但结果成功，改为只认 Traceback 崩溃 + 单列 anomalies 记录异常信号"
+  - date: "2026-08-14"
+    before: "把 'compact_boundary' 当异常信号"
+    after: "compact_boundary 是长任务必然现象，不算异常；真正的问题是「completed + 全 pending」矛盾组合"
