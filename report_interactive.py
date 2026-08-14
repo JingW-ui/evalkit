@@ -40,6 +40,9 @@ INK_SECONDARY = "#a0a0b8"
 INK_MUTED = "#6b6b85"
 GRID = "#2c2c44"
 
+# 全局 task 文件列表，供 build_data 内部匹配 session 用
+_task_files = []
+
 
 def fmt_tokens(n):
     if n >= 100_000_000:
@@ -49,8 +52,14 @@ def fmt_tokens(n):
     return f"{n:,}"
 
 
-def build_data(proj_dir: str) -> dict:
-    """整合 scanner + cost + fingerprint，生成下钻所需的数据树。"""
+def build_data(proj_dir: str, task_files: list = None) -> dict:
+    """整合 scanner + cost + fingerprint，生成下钻所需的数据树。
+
+    task_files: [{task_id, level, note, ...}, ...] 可选，用于给会话补充级别/结论
+    """
+    global _task_files
+    _task_files = task_files or []
+
     scan = scan_all(proj_dir)
     summary = scan["summary"]
     sessions = scan["sessions"]
@@ -76,6 +85,23 @@ def build_data(proj_dir: str) -> dict:
             fp = {"model": s["model"], "skill_count": 0, "mcp_tools_used": 0, "distinct_tools_used": 0}
             tool_dist = {}
 
+        # 匹配 task 文件里的 level 和 success_condition
+        level = None
+        task_success = None
+        evidence_hit = None
+        evidence_text = None
+        # 通过 JSONL 路径的 stem 匹配 task（task 里的 note 可能包含 session_id）
+        stem = Path(s["jsonl_path"]).stem
+        for tf in _task_files:
+            tfd = tf["_data"]
+            # 粗略匹配：task 的 note 里可能提到这个 session，或者 stem 和 task_id 有共同前缀
+            if stem in tfd.get("note", "") or tfd.get("task_id", "").startswith(stem[:8]):
+                level = tfd.get("level")
+                # 从 task 的 success_condition 推断结论（简单：有 success_evidence 则算"有结论"）
+                sc = tfd.get("success_condition", {})
+                task_success = "已定义" if sc else "未定义"
+                break
+
         enriched.append({
             "session_id": s["session_id"],
             "total_tokens": s["total_tokens"],
@@ -83,6 +109,10 @@ def build_data(proj_dir: str) -> dict:
             "skill_loaded": s["skill_loaded"],
             "trace_count": s["trace_count"],
             "snowball_count": s["snowball_count"],
+            "level": level,
+            "task_success": task_success,
+            "evidence_hit": evidence_hit,
+            "evidence_text": evidence_text,
             "cost": cost,
             "fingerprint": fp,
             "tool_dist": tool_dist,
@@ -139,6 +169,11 @@ def render_html(data: dict) -> str:
   window.DATA = DATA;
   window.COLORS = COLORS;
 
+  window.showView = function(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + name).classList.add('active');
+  };
+
   function fmtT(n) {
     if (n >= 100000000) return (n/100000000).toFixed(2) + ' 亿';
     if (n >= 10000) return (n/10000).toFixed(1) + ' 万';
@@ -148,11 +183,6 @@ def render_html(data: dict) -> str:
   function esc(s) {
     if (s == null) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  function showView(name) {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-' + name).classList.add('active');
   }
 
   window.renderOverview = function() {
@@ -234,6 +264,29 @@ def render_html(data: dict) -> str:
       '<div class="stat"><div class="stat-label">Trace 数</div><div class="stat-value">' + sess.trace_count + '</div></div>' +
       '<div class="stat"><div class="stat-label">雪球点</div><div class="stat-value">' + sess.snowball_count + '</div></div>' +
     '</div>';
+
+    // 级别与结论
+    if (sess.level) {
+      html += '<div class="panel"><h3>任务级别</h3>';
+      html += '<span class="tag">' + esc(sess.level) + '</span>';
+      html += ' <span class="muted" style="margin-left:8px">';
+      if (sess.level === 'L1') html += '简单单一动作';
+      else if (sess.level === 'L2') html += '简单动作组合';
+      else if (sess.level === 'L3') html += '混合真实场景';
+      else if (sess.level === 'L4') html += '不可能/负面任务';
+      html += '</span></div>';
+    }
+    if (sess.task_success) {
+      html += '<div class="panel"><h3>评测结论</h3>';
+      html += '<span class="muted">' + esc(sess.task_success) + '</span>';
+      if (sess.evidence_hit && sess.evidence_hit.length) {
+        html += '<br><span class="muted" style="font-size:12px">命中锚点: ' + sess.evidence_hit.map(esc).join('、') + '</span>';
+      }
+      if (sess.evidence_text) {
+        html += '<div class="prompt-box" style="margin-top:8px">' + esc(sess.evidence_text) + '</div>';
+      }
+      html += '</div>';
+    }
 
     html += '<div class="panel"><h3>成本分项</h3><table>' +
       '<tr><td>输入</td><td class="num">¥' + sess.cost.input_cost.toFixed(2) + '</td></tr>' +
@@ -428,11 +481,24 @@ def render_html(data: dict) -> str:
 def main():
     ap = argparse.ArgumentParser(description="生成交互式 HTML 评测报告")
     ap.add_argument("--dir", required=True, help="projects 目录")
+    ap.add_argument("--tasks", default="tasks", help="task 文件目录")
     ap.add_argument("--out", default="results/report_interactive.html", help="输出 HTML 路径")
     args = ap.parse_args()
 
+    # 加载 task 文件
+    task_files = []
+    tasks_dir = Path(__file__).parent / args.tasks
+    if tasks_dir.exists():
+        for tf in tasks_dir.glob("*.json"):
+            try:
+                td = json.loads(tf.read_text(encoding="utf-8"))
+                task_files.append({"_file": str(tf), "_data": td})
+            except Exception as e:
+                print(f"  ⚠ 跳过 {tf.name}: {e}")
+        print(f"加载 {len(task_files)} 个 task 文件")
+
     print("扫描并整合数据...")
-    data = build_data(args.dir)
+    data = build_data(args.dir, task_files)
     print(f"  共 {data['summary']['session_count']} 个会话, {len(data['skills'])} 个 skill")
 
     print("渲染 HTML...")
