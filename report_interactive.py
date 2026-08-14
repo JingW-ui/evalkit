@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from scanner import scan_all
 from cost import compute_cost
 from analyze import extract_env_fingerprint
-from parser import parse_session_jsonl
+from parser import parse_session_jsonl, replay_metrics
 
 # 网易深色风
 CATEGORY_COLORS = [
@@ -53,7 +53,7 @@ def fmt_tokens(n):
 
 
 def build_data(proj_dir: str, task_files: list = None) -> dict:
-    """整合 scanner + cost + fingerprint，生成下钻所需的数据树。
+    """整合 scanner + cost + fingerprint + replay_metrics，生成下钻所需的数据树。
 
     task_files: [{task_id, level, note, ...}, ...] 可选，用于给会话补充级别/结论
     """
@@ -66,6 +66,53 @@ def build_data(proj_dir: str, task_files: list = None) -> dict:
 
     enriched = []
     for s in sessions:
+        # 找到匹配的 task（如果有）
+        matched_task = None
+        stem = Path(s["jsonl_path"]).stem
+        for tf in _task_files:
+            tfd = tf["_data"]
+            if stem in tfd.get("note", "") or tfd.get("task_id", "").startswith(stem[:8]):
+                matched_task = tfd
+                break
+
+        # 调用 replay_metrics 跑出完整分析（level、结论、证据锚点等）
+        if matched_task:
+            try:
+                rm = replay_metrics(s["jsonl_path"], matched_task)
+                level = rm.get("level", matched_task.get("level"))
+                task_success = rm["metrics"].get("task_success")
+                evidence_hit = rm["metrics"].get("evidence_hit", [])
+                evidence_text = rm["metrics"].get("evidence_text", "")
+                tool_dist = rm["metrics"].get("tool_calls_by_name", {})
+                human_interventions = rm["metrics"].get("human_interventions", 0)
+                user_turns = rm["metrics"].get("user_turns", 0)
+            except Exception as e:
+                print(f"  ⚠ replay_metrics 失败 {stem}: {e}")
+                level = matched_task.get("level")
+                task_success = None
+                evidence_hit = None
+                evidence_text = None
+                tool_dist = {}
+                human_interventions = 0
+                user_turns = 0
+        else:
+            level = None
+            task_success = None
+            evidence_hit = None
+            evidence_text = None
+            human_interventions = 0
+            user_turns = 0
+            # 无 task 时只算 tool_dist
+            try:
+                parsed = parse_session_jsonl(s["jsonl_path"])
+                tool_dist = {}
+                for t in parsed.get("tool_sequence", []):
+                    name = t["name"]
+                    tool_dist[name] = tool_dist.get(name, 0) + 1
+            except Exception:
+                tool_dist = {}
+
+        # 成本
         m = {
             "input_tokens": s["total_input"],
             "cache_read_tokens": s["total_cache_read"],
@@ -74,33 +121,12 @@ def build_data(proj_dir: str, task_files: list = None) -> dict:
         }
         cost = compute_cost(m)
 
+        # 环境指纹
         try:
             parsed = parse_session_jsonl(s["jsonl_path"])
             fp = extract_env_fingerprint(s["jsonl_path"], parsed)
-            tool_dist = {}
-            for t in parsed.get("tool_sequence", []):
-                name = t["name"]
-                tool_dist[name] = tool_dist.get(name, 0) + 1
         except Exception:
             fp = {"model": s["model"], "skill_count": 0, "mcp_tools_used": 0, "distinct_tools_used": 0}
-            tool_dist = {}
-
-        # 匹配 task 文件里的 level 和 success_condition
-        level = None
-        task_success = None
-        evidence_hit = None
-        evidence_text = None
-        # 通过 JSONL 路径的 stem 匹配 task（task 里的 note 可能包含 session_id）
-        stem = Path(s["jsonl_path"]).stem
-        for tf in _task_files:
-            tfd = tf["_data"]
-            # 粗略匹配：task 的 note 里可能提到这个 session，或者 stem 和 task_id 有共同前缀
-            if stem in tfd.get("note", "") or tfd.get("task_id", "").startswith(stem[:8]):
-                level = tfd.get("level")
-                # 从 task 的 success_condition 推断结论（简单：有 success_evidence 则算"有结论"）
-                sc = tfd.get("success_condition", {})
-                task_success = "已定义" if sc else "未定义"
-                break
 
         enriched.append({
             "session_id": s["session_id"],
@@ -116,6 +142,8 @@ def build_data(proj_dir: str, task_files: list = None) -> dict:
             "cost": cost,
             "fingerprint": fp,
             "tool_dist": tool_dist,
+            "human_interventions": human_interventions,
+            "user_turns": user_turns,
             "traces": s["traces"],
             "anomalies": s["anomalies"],
         })
@@ -262,7 +290,7 @@ def render_html(data: dict) -> str:
       '<div class="stat"><div class="stat-label">总 Token</div><div class="stat-value">' + fmtT(sess.total_tokens) + '</div></div>' +
       '<div class="stat"><div class="stat-label">成本</div><div class="stat-value" style="color:#D9382B">¥' + sess.cost.total_cost.toFixed(2) + '</div></div>' +
       '<div class="stat"><div class="stat-label">Trace 数</div><div class="stat-value">' + sess.trace_count + '</div></div>' +
-      '<div class="stat"><div class="stat-label">雪球点</div><div class="stat-value">' + sess.snowball_count + '</div></div>' +
+      '<div class="stat"><div class="stat-label">人工介入</div><div class="stat-value">' + (sess.human_interventions || 0) + ' 次</div></div>' +
     '</div>';
 
     // 级别与结论
@@ -276,9 +304,10 @@ def render_html(data: dict) -> str:
       else if (sess.level === 'L4') html += '不可能/负面任务';
       html += '</span></div>';
     }
-    if (sess.task_success) {
+    if (sess.task_success !== null && sess.task_success !== undefined) {
+      const successLabel = sess.task_success ? '✅ 成功' : '❌ 失败';
       html += '<div class="panel"><h3>评测结论</h3>';
-      html += '<span class="muted">' + esc(sess.task_success) + '</span>';
+      html += '<span style="font-weight:600">' + successLabel + '</span>';
       if (sess.evidence_hit && sess.evidence_hit.length) {
         html += '<br><span class="muted" style="font-size:12px">命中锚点: ' + sess.evidence_hit.map(esc).join('、') + '</span>';
       }
