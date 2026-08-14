@@ -82,8 +82,49 @@ def theoretical_cost(model: str, tokens: dict, pricing: dict = None) -> float:
 
 # ===== 平台加价动态反推 =====
 
-# 会话级缓存：{model: markup}
+# 会话级缓存：{model: [markup, ...]}。首条日志前从 conf.json 读入历史样本，
+# 之后每条 pod 日志 append 一个样本并写回 conf.json；用中位数作稳定加价系数。
 _markup_cache = {}
+_conf_path = None
+_conf_loaded = False          # 是否已从 conf 读入历史样本
+
+
+def _conf_file() -> Path:
+    global _conf_path
+    if _conf_path is None:
+        _conf_path = Path(__file__).parent / "conf.json"
+    return _conf_path
+
+
+def _load_markup_samples():
+    """从 conf.json 读入历史上累积的 markup 样本（pricing.markup_samples）。"""
+    global _conf_loaded
+    if _conf_loaded:
+        return
+    _conf_loaded = True
+    try:
+        with open(_conf_file(), "r", encoding="utf-8") as f:
+            conf = json.load(f)
+    except Exception:
+        return
+    samples = conf.get("pricing", {}).get("markup_samples", {})
+    for model, arr in samples.items():
+        if isinstance(arr, list):
+            _markup_cache[model] = list(arr)
+
+
+def _save_markup_samples():
+    """把当前 _markup_cache 写回 conf.json 的 pricing.markup_samples（保留其余配置）。"""
+    try:
+        with open(_conf_file(), "r", encoding="utf-8") as f:
+            conf = json.load(f)
+    except Exception:
+        conf = {}
+    conf.setdefault("pricing", {})["markup_samples"] = {
+        model: list(arr) for model, arr in _markup_cache.items() if arr
+    }
+    with open(_conf_file(), "w", encoding="utf-8") as f:
+        json.dump(conf, f, ensure_ascii=False, indent=2)
 
 
 def calibrate_markup(model: str, actual_cost: float, tokens: dict, pricing: dict = None) -> float:
@@ -91,19 +132,48 @@ def calibrate_markup(model: str, actual_cost: float, tokens: dict, pricing: dict
     从一条 airLab pod 日志的 (cost, usage) 反推该模型的平台加价系数。
     markup = 实际cost / 理论cost（官方挂牌价×倍率）。
 
-    返回 markup，并缓存到 _markup_cache[model]。若理论成本为 0（模型未知）则无法反推，返回 None。
+    返回本日志的即时 markup，并把样本 append 到 _markup_cache[model]（首条前先从
+    conf.json 读入历史样本），随后写回 conf.json 持久化。
+    若理论成本为 0（模型未知）则无法反推，返回 None。
     """
+    _load_markup_samples()
     theo = theoretical_cost(model, tokens, pricing)
     if theo <= 0 or actual_cost <= 0:
         return None
     markup = actual_cost / theo
-    _markup_cache[model] = markup
+    _markup_cache.setdefault(model, []).append(markup)
+    _save_markup_samples()
     return markup
 
 
 def get_markup(model: str) -> float:
-    """返回某模型的平台加价系数（已缓存则直接用）。"""
-    return _markup_cache.get(model)
+    """返回某模型**稳定**的平台加价系数（多条日志反推值的中位数）；无样本返回 None。"""
+    _load_markup_samples()
+    samples = _markup_cache.get(model)
+    if not samples:
+        return None
+    s = sorted(samples)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def get_markup_stats(model: str) -> dict:
+    """返回某模型的加价系数统计：{samples, n, median, min, max}；无样本返回 None。"""
+    samples = _markup_cache.get(model)
+    if not samples:
+        return None
+    s = sorted(samples)
+    n = len(s)
+    mid = n // 2
+    median = s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+    return {
+        "samples": samples,
+        "n": n,
+        "median": median,
+        "min": s[0],
+        "max": s[-1],
+    }
 
 
 def effective_cost(model: str, actual_cost: float, tokens: dict, pricing: dict = None) -> dict:
@@ -112,12 +182,14 @@ def effective_cost(model: str, actual_cost: float, tokens: dict, pricing: dict =
       {
         "actual_cost": float,        # pod 日志报的实际 cost（¥）
         "theoretical_cost": float,   # 挂牌价×倍率的理论值（¥）
-        "markup": float|None,        # 反推出的平台加价系数
-        "unit_cost": dict,           # 该模型的实际单价（¥/1M，含加价）
+        "markup": float|None,        # 本条日志反推的即时加价系数
+        "stable_markup": float|None, # 同模型历史样本的中位数（稳定值，含本条）
+        "unit_cost": dict,           # 该模型的实际单价（¥/1M，含加价，用即时 markup）
       }
     """
     theo = theoretical_cost(model, tokens, pricing)
     markup = calibrate_markup(model, actual_cost, tokens, pricing)
+    stable = get_markup(model)
     unit = anchor_unit_cost(pricing)
     mult = get_multiplier(model, pricing) or 1.0
     unit_eff = {}
@@ -128,6 +200,7 @@ def effective_cost(model: str, actual_cost: float, tokens: dict, pricing: dict =
         "actual_cost": actual_cost,
         "theoretical_cost": round(theo, 4),
         "markup": markup,
+        "stable_markup": stable,
         "unit_cost": {k: round(v, 6) for k, v in unit_eff.items()},
     }
 
@@ -182,6 +255,7 @@ def compute_cost(metrics: dict, pricing: dict = None) -> dict:
 
 if __name__ == "__main__":
     # 自测：用 airLab pod 日志反推平台的 deepseek-v4-pro 结算价
+    # 注：此处用理论值直接算 markup（不调 calibrate_markup），避免污染 conf.json 的样本库
     import sys
     model = "deepseek-v4-pro"
     tokens = {
@@ -192,7 +266,7 @@ if __name__ == "__main__":
     }
     actual = 1.5658539999999999
     theo = theoretical_cost(model, tokens)
-    markup = calibrate_markup(model, actual, tokens)
+    markup = actual / theo if theo > 0 else None
     unit = anchor_unit_cost()
     mult = get_multiplier(model)
     lines = [

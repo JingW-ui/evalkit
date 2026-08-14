@@ -26,7 +26,13 @@
       "kimi-k3": 2.1,
       "kimi-k3[1m]": 2.1
     },
-    "platform_markup": null
+    "platform_markup": null,
+    "markup_samples": {
+      "deepseek-v4-pro": [
+        4.744262718677029,
+        3.876256187487684
+      ]
+    }
   },
   "default_model": "claude-sonnet-5",
   "default_n": 3,

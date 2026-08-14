@@ -110,6 +110,8 @@ def scan_single_session(jsonl_path):
 
     tasks = []              # 真实用户任务（按对话切分）
     cur_task = None         # 当前任务指针
+    # 全事件时间戳（供「等待人输入」空窗计算）
+    _events = []            # 有序 [(epoch_s, type)]，全部事件
 
     # TaskCreate/TaskUpdate 关联：TaskCreate 常不带 id，按出现顺序配对数字 id
     creates = []            # 出现顺序的 TaskCreate（subject/description/...）
@@ -140,6 +142,10 @@ def scan_single_session(jsonl_path):
                     ts_first = ts
                 ts_last = ts
 
+            # 全事件时间戳（供「等待人输入」空窗计算）
+            ets = _parse_ts(ts)
+            if ets is not None:
+                _events.append((ets, t))
             # 真实用户任务：新任务起点
             if t == "user":
                 content = obj.get("message", {}).get("content", "")
@@ -160,6 +166,7 @@ def scan_single_session(jsonl_path):
                         "human_interventions": 0,    # 该任务内 AskUserQuestion 次数
                         "stop_reason": None,         # 该任务最后一条 assistant 的 stop_reason
                         "has_final_text": False,     # 该任务是否有最终 text 输出（非工具调用）
+                        "_events": [],               # 该任务区间内的事件时间戳 (epoch_s, type)
                     }
                     tasks.append(cur_task)
 
@@ -258,6 +265,10 @@ def scan_single_session(jsonl_path):
                             "ts": ts,
                         })
 
+            # 把本事件时间戳归入当前任务（在 user 分支创建任务之后 + assistant 分支之后都正确）
+            if ets is not None and cur_task is not None:
+                cur_task["_events"].append((ets, t))
+
     # 收尾：最后一个任务
     if cur_task is not None:
         cur_task["end_ts"] = ts_last
@@ -330,11 +341,22 @@ def scan_single_session(jsonl_path):
     blocks = [s for s in task_subitems if s["status"] == "blocked"]
     completed_sub = sum(1 for s in task_subitems if s["status"] == "completed")
 
-    # 计算每个任务的耗时
+    # 计算每个任务的耗时 + 等待人输入
+    WAIT_GAP_S = 15.0
     for tk in tasks:
         t0 = _parse_ts(tk["start_ts"])
         t1 = _parse_ts(tk["end_ts"])
         tk["duration_s"] = (t1 - t0) if (t0 is not None and t1 is not None) else None
+        # 等待人输入：任务区间内相邻事件间隔 > 阈值 的空窗总和
+        wait_s = 0.0
+        evs = tk.get("_events", [])
+        for i in range(1, len(evs)):
+            gap = evs[i][0] - evs[i - 1][0]
+            if gap > WAIT_GAP_S:
+                wait_s += gap
+        tk["wait_s"] = wait_s
+        tk["active_s"] = (tk["duration_s"] - wait_s) if tk["duration_s"] is not None else None
+        del tk["_events"]  # 不暴露内部时间戳
 
     # ===== 任务完成判定（启发式） =====
     # 判据：has_final_text（输出了最终结论文本）优先视为「已完成」；
@@ -362,11 +384,52 @@ def scan_single_session(jsonl_path):
     if t_first is not None and t_last is not None:
         session_duration = t_last - t_first
 
+    # 会话级「等待人输入」汇总（全部相邻事件 > 15s 空窗之和）
+    total_wait_s = 0.0
+    WAIT_GAP_S = 15.0
+    for i in range(1, len(_events)):
+        gap = _events[i][0] - _events[i - 1][0]
+        if gap > WAIT_GAP_S:
+            total_wait_s += gap
+    session_active_s = (session_duration - total_wait_s) if session_duration is not None else None
+
+    # ===== JSONL 成本估算（无 cost 字段，用挂牌价理论成本 × 平台稳定加价） =====
+    cost_analysis = None
+    if cost_mod is not None:
+        dom_model = None
+        if model_usage:
+            dom_model = max(model_usage.items(), key=lambda kv: kv[1])[0]
+        if dom_model:
+            tokens_for_cost = {
+                "input_tokens": tokens["input"],
+                "output_tokens": tokens["output"],
+                "cache_read_input_tokens": tokens["cache_read"],
+                "cache_creation_input_tokens": tokens["cache_write"],
+            }
+            theo = 0.0
+            try:
+                theo = cost_mod.theoretical_cost(dom_model, tokens_for_cost)
+            except Exception:
+                theo = 0.0
+            stable = None
+            try:
+                stable = cost_mod.get_markup(dom_model)
+            except Exception:
+                stable = None
+            cost_analysis = {
+                "model": dom_model,
+                "theoretical_cost": round(theo, 4),
+                "stable_markup": stable,
+                "estimated_cost": round(theo * stable, 4) if (theo > 0 and stable) else None,
+            }
+
     return {
         "session_id": session_id,
         "jsonl_path": str(path),
         "range": {"first": ts_first, "last": ts_last},
         "duration_s": session_duration,
+        "wait_s": total_wait_s,
+        "active_s": session_active_s,
         "model_usage": model_usage,
         "tool_dist": tool_dist,
         "total_tool_calls": total_tool_calls,
@@ -383,6 +446,7 @@ def scan_single_session(jsonl_path):
         "total_sub": len(task_subitems),
         "human_interventions": human_interventions,
         "total_human_interventions": len(human_interventions),
+        "cost_analysis": cost_analysis,
     }
 
 
@@ -603,102 +667,125 @@ def render_html(data):
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
     background: {SURFACE};
     color: {INK_PRIMARY};
-    line-height: 1.6;
+    font-size: 12.5px;
+    line-height: 1.45;
   }}
-  .wrap {{ max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; }}
+  .wrap {{ max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }}
 
   .hero {{
     background: {CARD};
     border: 1px solid {GRID};
-    border-radius: 12px;
-    padding: 24px 28px;
-    margin-bottom: 24px;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
   }}
   .hero h1 {{
-    margin: 0 0 4px;
-    font-size: 22px;
+    margin: 0 0 2px;
+    font-size: 16px;
     font-weight: 700;
   }}
   .hero .sub {{
     color: {INK_MUTED};
-    font-size: 13px;
-    margin-bottom: 16px;
+    font-size: 11px;
+    margin-bottom: 10px;
     word-break: break-all;
   }}
   .hero-grid {{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px 16px;
   }}
-  .hitem {{ text-align: center; }}
-  .hitem .v {{ font-size: 26px; font-weight: 700; color: {ACCENT}; }}
-  .hitem .k {{ color: {INK_MUTED}; font-size: 12px; }}
+  .hitem {{ text-align: left; }}
+  .hitem .v {{ font-size: 17px; font-weight: 700; color: {ACCENT}; line-height: 1.2; }}
+  .hitem .k {{ color: {INK_MUTED}; font-size: 11px; }}
 
   .panel {{
     background: {CARD};
     border: 1px solid {GRID};
-    border-radius: 12px;
-    padding: 20px 24px;
-    margin-bottom: 20px;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
   }}
   .panel h2 {{
-    margin: 0 0 16px;
-    font-size: 16px;
+    margin: 0 0 10px;
+    font-size: 14px;
     font-weight: 700;
     color: {INK_PRIMARY};
   }}
 
-  .stat-grid {{
+  .grid {{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
   }}
   .stat {{
     background: {SURFACE};
     border: 1px solid {GRID};
-    border-radius: 8px;
-    padding: 14px 16px;
+    border-radius: 6px;
+    padding: 10px 12px;
   }}
-  .stat .label {{ color: {INK_MUTED}; font-size: 12px; }}
-  .stat .value {{ font-size: 20px; font-weight: 600; margin-top: 4px; }}
+  .stat .label {{ color: {INK_MUTED}; font-size: 11px; }}
+  .stat .value {{ font-size: 15px; font-weight: 600; margin-top: 2px; }}
 
   .task-card {{
     border: 1px solid {GRID};
-    border-radius: 10px;
-    padding: 16px 20px;
-    margin-bottom: 14px;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
     background: {SURFACE};
   }}
-  .task-card .q {{ font-size: 15px; font-weight: 600; margin-bottom: 4px; }}
-  .task-card .meta {{ color: {INK_SECONDARY}; font-size: 12px; margin-bottom: 10px; }}
+  .task-card .q {{ font-size: 13px; font-weight: 600; margin-bottom: 2px; }}
+  .task-card .meta {{ color: {INK_SECONDARY}; font-size: 11px; margin-bottom: 6px; }}
+
+  details.section {{
+    border: 1px solid {GRID};
+    border-radius: 8px;
+    margin-bottom: 10px;
+    background: {CARD};
+  }}
+  details.section > summary {{
+    cursor: pointer;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 700;
+    color: {INK_PRIMARY};
+    list-style: none;
+  }}
+  details.section > summary::before {{
+    content: "▸ ";
+    color: {INK_MUTED};
+  }}
+  details.section[open] > summary::before {{
+    content: "▾ ";
+    color: {ACCENT};
+  }}
+  details.section > summary .cnt {{
+    float: right;
+    font-size: 11px;
+    font-weight: 500;
+    color: {INK_MUTED};
+  }}
+  details.section > .detail-body {{
+    padding: 8px 16px 14px;
+    border-top: 1px solid {GRID};
+  }}
   .badge {{
     display: inline-block;
-    padding: 2px 10px;
-    border-radius: 12px;
+    padding: 1px 8px;
+    border-radius: 10px;
     font-size: 11px;
     font-weight: 600;
-    margin-right: 6px;
+    margin-right: 4px;
   }}
   .badge-skill {{ background: rgba(45,164,78,0.15); color: #3fb950; }}
   .badge-noskill {{ background: rgba(110,118,129,0.18); color: {INK_MUTED}; }}
   .badge-blocked {{ color: {RED}; font-weight: 700; }}
 
-  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-  th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid {GRID}; }}
-  th {{ color: {INK_MUTED}; font-weight: 600; font-size: 12px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+  th, td {{ text-align: left; padding: 5px 8px; border-bottom: 1px solid {GRID}; }}
+  th {{ color: {INK_MUTED}; font-weight: 600; font-size: 11px; }}
   td.num, th.num {{ text-align: right; font-family: ui-monospace, monospace; }}
-  .status-icon {{ font-size: 14px; }}
-
-  .bar {{
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-  }}
-  .bar .name {{ width: 220px; color: {INK_SECONDARY}; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .bar .track {{ flex: 1; background: {SURFACE}; border-radius: 4px; height: 12px; overflow: hidden; }}
-  .bar .fill {{ height: 100%; background: {ACCENT}; border-radius: 4px; }}
-  .bar .cnt {{ width: 70px; text-align: right; font-family: ui-monospace, monospace; font-size: 12px; color: {INK_PRIMARY}; }}
+  .status-icon {{ font-size: 13px; }}
 
   .muted {{ color: {INK_MUTED}; }}
   .empty {{ color: {INK_MUTED}; font-style: italic; }}
@@ -749,90 +836,137 @@ def render_html(data):
 
   let h = '';
 
-  // ===== Hero =====
   const tok = data.tokens;
+
+  // ===== Hero（精简一行 + 紧凑指标行） =====
   h += '<div class="hero">';
   h += '<h1>单会话评测报告</h1>';
   h += '<div class="sub mono">' + esc(data.session_id) + '</div>';
   h += '<div class="hero-grid">';
   h += '<div class="hitem"><div class="v">' + data.task_count + '</div><div class="k">真实任务数</div></div>';
-  h += '<div class="hitem"><div class="v">' + fmtDur(data.duration_s) + '</div><div class="k">会话总耗时</div></div>';
-  h += '<div class="hitem"><div class="v">' + (data.task_count ? (100*data.skill_used_tasks/data.task_count).toFixed(0) + '%' : '-') + '</div><div class="k">Skill 使用率（含脚本直用）</div></div>';
+  h += '<div class="hitem"><div class="v">' + fmtDur(data.active_s) + '</div><div class="k">模型活跃耗时</div></div>';
+  h += '<div class="hitem"><div class="v">' + fmtDur(data.wait_s) + '</div><div class="k">等待人输入</div></div>';
+  h += '<div class="hitem"><div class="v">' + (data.task_count ? (100*data.skill_used_tasks/data.task_count).toFixed(0) + '%' : '-') + '</div><div class="k">Skill 使用率</div></div>';
   h += '<div class="hitem"><div class="v">' + fmtTok(tok.input + tok.cache_read + tok.output) + '</div><div class="k">总 Token</div></div>';
   h += '<div class="hitem"><div class="v">' + data.total_tool_calls + '</div><div class="k">工具调用总数</div></div>';
-  h += '<div class="hitem"><div class="v">' + (data.total_human_interventions || 0) + '</div><div class="k">人工介入次数</div></div>';
+  h += '<div class="hitem"><div class="v">' + (data.total_human_interventions || 0) + '</div><div class="k">人工介入</div></div>';
   h += '</div>';
   h += '</div>';
 
-  // ===== 总指标 =====
-  h += '<div class="panel"><h2>总指标</h2>';
-  h += '<div class="stat-grid">';
-  h += '<div class="stat"><div class="label">Input</div><div class="value">' + fmtTok(tok.input) + '</div></div>';
-  h += '<div class="stat"><div class="label">Cache Read</div><div class="value">' + fmtTok(tok.cache_read) + '</div></div>';
-  h += '<div class="stat"><div class="label">Cache Write</div><div class="value">' + fmtTok(tok.cache_write) + '</div></div>';
-  h += '<div class="stat"><div class="label">Output</div><div class="value">' + fmtTok(tok.output) + '</div></div>';
-  h += '<div class="stat"><div class="label">任务完成度</div><div class="value">' + data.completed_sub + ' / ' + data.total_sub + '</div></div>';
-  h += '</div>';
+  // ===== 总览仪表盘（总指标 + 成本 + Skill 口径 + 模型，网格并排） =====
+  h += '<div class="panel"><h2>总览仪表盘</h2>';
+  h += '<div class="grid">';
 
   const cacheTotal = tok.input + tok.cache_read;
   const cacheHit = cacheTotal ? (100 * tok.cache_read / cacheTotal).toFixed(1) : 0;
-  h += '<div class="muted" style="margin-top:14px;font-size:12px">Cache 命中率：' + cacheHit + '%</div>';
-  h += '</div>';
-
-  // ===== 成本计价（airLab pod 日志专属） =====
-  if (data.airlab && data.cost_analysis) {{
-    const ca = data.cost_analysis;
-    h += '<div class="panel"><h2>成本计价</h2>';
-    h += '<div class="stat-grid">';
-    h += '<div class="stat"><div class="label">实际结算成本</div><div class="value">¥' + ca.actual_cost.toFixed(4) + '</div></div>';
-    h += '<div class="stat"><div class="label">挂牌价理论成本</div><div class="value">¥' + ca.theoretical_cost.toFixed(4) + '</div></div>';
-    h += '<div class="stat"><div class="label">平台加价系数</div><div class="value">' + (ca.markup ? ca.markup.toFixed(3) + 'x' : '-') + '</div></div>';
-    h += '</div>';
-    if (ca.unit_cost) {{
-      h += '<div class="muted" style="margin-top:14px;font-size:12px">该模型实际结算单价（¥/百万 tokens）：输入 ¥' + ca.unit_cost.input.toFixed(2) + ' · 输出 ¥' + ca.unit_cost.output.toFixed(2) + ' · 缓存命中 ¥' + ca.unit_cost.cache_read.toFixed(4) + '</div>';
-    }}
-    h += '<div class="muted" style="margin-top:6px;font-size:12px">加价系数由本日志 (cost, usage) 动态反推：实际成本 ÷（挂牌价 × 模型倍率）。后续遇到新模型也可据此补映射。</div>';
-    h += '</div>';
-  }}
-
-  // ===== Skill 触发（两种口径） =====
-  h += '<div class="panel"><h2>Skill 触发（两种口径）</h2>';
-  h += '<div class="stat-grid">';
   const rExplicit = data.task_count ? (100*data.skill_triggered_tasks/data.task_count).toFixed(0) + '%' : '-';
   const rUsed = data.task_count ? (100*data.skill_used_tasks/data.task_count).toFixed(0) + '%' : '-';
-  h += '<div class="stat"><div class="label">口径 A · 显式 Skill 工具</div><div class="value">' + rExplicit + '</div><div class="label" style="margin-top:4px">' + data.skill_triggered_tasks + ' / ' + data.task_count + ' 个任务</div></div>';
-  h += '<div class="stat"><div class="label">口径 B · 含脚本直用</div><div class="value">' + rUsed + '</div><div class="label" style="margin-top:4px">' + data.skill_used_tasks + ' / ' + data.task_count + ' 个任务</div></div>';
-  h += '</div>';
-  h += '<div class="muted" style="margin-top:14px;font-size:12px">口径 B 额外识别了「绕开 Skill 工具、直接 Bash/Read 执行 skills/&lt;名&gt;/ 目录下脚本」的使用方式。两者并存，因为 agent 可能在预加载后不再显式调用 Skill 工具。</div>';
+
+  // token 分项
+  h += '<div class="stat"><div class="label">Token 分项</div><div class="value">' + fmtTok(tok.input + tok.cache_read + tok.output) + '</div><div class="label" style="margin-top:4px">in ' + fmtTok(tok.input) + ' · cr ' + fmtTok(tok.cache_read) + ' · cw ' + fmtTok(tok.cache_write) + ' · out ' + fmtTok(tok.output) + '</div><div class="label">Cache 命中 ' + cacheHit + '%</div></div>';
+
+  // 任务完成度
+  h += '<div class="stat"><div class="label">任务完成度</div><div class="value">' + data.completed_sub + ' / ' + data.total_sub + '</div><div class="label" style="margin-top:4px">子任务完成数 / 总数</div></div>';
+
+  // Skill 两口径
+  h += '<div class="stat"><div class="label">Skill · 显式</div><div class="value">' + rExplicit + '</div><div class="label" style="margin-top:4px">' + data.skill_triggered_tasks + ' / ' + data.task_count + ' 任务</div></div>';
+  h += '<div class="stat"><div class="label">Skill · 含脚本直用</div><div class="value">' + rUsed + '</div><div class="label" style="margin-top:4px">' + data.skill_used_tasks + ' / ' + data.task_count + ' 任务</div></div>';
+
+  // 成本计价：airLab（有 actual_cost + 本次/稳定加价）或 JSONL（估算值）
+  if (data.cost_analysis) {{
+    const ca = data.cost_analysis;
+    if (data.airlab) {{
+      h += '<div class="stat"><div class="label">实际结算成本</div><div class="value">¥' + ca.actual_cost.toFixed(4) + '</div><div class="label" style="margin-top:4px">挂牌价 ¥' + ca.theoretical_cost.toFixed(4) + '</div></div>';
+      h += '<div class="stat"><div class="label">平台加价（本次）</div><div class="value">' + (ca.markup ? ca.markup.toFixed(3) + 'x' : '-') + '</div><div class="label" style="margin-top:4px">由 (cost, usage) 反推</div></div>';
+      h += '<div class="stat"><div class="label">平台加价（稳定值）</div><div class="value">' + (ca.stable_markup ? ca.stable_markup.toFixed(3) + 'x' : '-') + '</div><div class="label" style="margin-top:4px">同模型历史样本中位数</div></div>';
+    }} else {{
+      h += '<div class="stat"><div class="label">估算成本</div><div class="value">' + (ca.estimated_cost !== null && ca.estimated_cost !== undefined ? '¥' + ca.estimated_cost.toFixed(4) : '-') + '</div><div class="label" style="margin-top:4px">挂牌价 ¥' + ca.theoretical_cost.toFixed(4) + '</div></div>';
+      h += '<div class="stat"><div class="label">平台加价（稳定值）</div><div class="value">' + (ca.stable_markup ? ca.stable_markup.toFixed(3) + 'x' : '-') + '</div><div class="label" style="margin-top:4px">' + esc(ca.model || '') + ' 反推样本中位数</div></div>';
+    }}
+  }}
+
   h += '</div>';
 
-  // ===== 工具分布 =====
-  h += '<div class="panel"><h2>工具调用分布</h2>';
+  // 成本单价（airLab）副注
+  if (data.airlab && data.cost_analysis && data.cost_analysis.unit_cost) {{
+    const uc = data.cost_analysis.unit_cost;
+    h += '<div class="muted" style="margin-top:8px;font-size:11px">实际结算单价（¥/百万 tokens）：输入 ¥' + uc.input.toFixed(2) + ' · 输出 ¥' + uc.output.toFixed(2) + ' · 缓存命中 ¥' + uc.cache_read.toFixed(4) + '</div>';
+  }}
+  // 成本估算（JSONL）副注
+  if (!data.airlab && data.cost_analysis) {{
+    h += '<div class="muted" style="margin-top:8px;font-size:11px">估算成本为「挂牌价理论成本 × 平台稳定加价系数（来自 airLab pod 日志样本中位数）」，无实际账单，仅供量级参考。</div>';
+  }}
+  h += '<div class="muted" style="margin-top:4px;font-size:11px">Skill「含脚本直用」额外识别了绕开 Skill 工具、直接 Bash/Read 执行 skills/&lt;名&gt;/ 目录下脚本的使用方式（agent 预加载后常不再显式调用 Skill 工具）。</div>';
+  h += '</div>';
+
+  // ===== 工具分布 + 模型使用（紧凑表格，两栏并排） =====
+  h += '<div class="panel"><h2>工具与模型</h2><div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">';
+
+  h += '<div>';
+  h += '<div class="muted" style="font-size:11px;margin-bottom:6px">工具调用分布（共 ' + data.total_tool_calls + ' 次）</div>';
   const toolEntries = Object.entries(data.tool_dist).sort((a,b) => b[1]-a[1]);
-  const maxTool = toolEntries.length ? toolEntries[0][1] : 1;
+  h += '<table><thead><tr><th>工具</th><th class="num">次数</th><th class="num">占比</th></tr></thead><tbody>';
   toolEntries.forEach(([name, cnt]) => {{
-    h += '<div class="bar">';
-    h += '<div class="name" title="' + esc(name) + '">' + esc(name) + '</div>';
-    h += '<div class="track"><div class="fill" style="width:' + (100*cnt/maxTool).toFixed(1) + '%"></div></div>';
-    h += '<div class="cnt">' + cnt + '</div>';
-    h += '</div>';
+    const pct = data.total_tool_calls ? (100*cnt/data.total_tool_calls).toFixed(1) + '%' : '-';
+    h += '<tr><td title="' + esc(name) + '" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(name) + '</td><td class="num">' + cnt + '</td><td class="num muted">' + pct + '</td></tr>';
   }});
-  h += '</div>';
+  h += '</tbody></table></div>';
 
-  // ===== 模型 =====
-  h += '<div class="panel"><h2>模型使用</h2>';
+  h += '<div>';
+  h += '<div class="muted" style="font-size:11px;margin-bottom:6px">模型使用</div>';
   const mEntries = Object.entries(data.model_usage);
+  const totalModel = mEntries.reduce((s, e) => s + e[1], 0);
+  h += '<table><thead><tr><th>模型</th><th class="num">轮数</th><th class="num">占比</th></tr></thead><tbody>';
   mEntries.forEach(([m, cnt]) => {{
-    h += '<div class="bar">';
-    h += '<div class="name">' + esc(m) + '</div>';
-    h += '<div class="track"><div class="fill" style="width:100%"></div></div>';
-    h += '<div class="cnt">' + cnt + ' 轮</div>';
+    const pct = totalModel ? (100*cnt/totalModel).toFixed(1) + '%' : '-';
+    h += '<tr><td title="' + esc(m) + '" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(m) + '</td><td class="num">' + cnt + '</td><td class="num muted">' + pct + '</td></tr>';
+  }});
+  h += '</tbody></table></div>';
+
+  h += '</div></div>';
+
+  // ===== 任务列表（按用户对话）· 密集行 =====
+  h += '<div class="panel"><h2>任务列表（按用户对话）</h2>';
+  const COMP_LABEL = {{'completed': '✓ 已完成', 'partial': '◐ 部分完成', 'interrupted': '✗ 疑似中断'}};
+  const COMP_CLASS = {{'completed': 'badge-skill', 'partial': 'badge-noskill', 'interrupted': 'badge-blocked'}};
+  data.tasks.forEach((tk, i) => {{
+    h += '<div class="task-card">';
+    h += '<div class="q">#' + (i+1) + ' ' + esc(tk.query) + '</div>';
+    h += '<div class="meta">' + fmtTime(tk.start_ts) + ' → ' + fmtTime(tk.end_ts);
+    h += ' · 活跃 ' + fmtDur(tk.active_s) + ' · 等待 ' + fmtDur(tk.wait_s);
+    h += '</div>';
+    h += '<div class="meta">';
+    const comp = tk.completion || 'interrupted';
+    if (tk.skill_loaded) h += '<span class="badge badge-skill">⚡ ' + esc(tk.skill_loaded) + '</span>';
+    if (tk.skill_via_script) h += '<span class="badge badge-skill">📜 ' + esc(tk.skill_via_script) + '</span>';
+    if (!tk.skill_loaded && !tk.skill_via_script) h += '<span class="badge badge-noskill">无 Skill</span>';
+    h += '<span class="badge badge-noskill">工具 ' + tk.tool_calls + '</span>';
+    h += '<span class="badge badge-noskill">in ' + fmtTok(tk.tokens.input) + '</span>';
+    h += '<span class="badge badge-noskill">out ' + fmtTok(tk.tokens.output) + '</span>';
+    h += '<span class="badge ' + (COMP_CLASS[comp]||'badge-noskill') + '">' + (COMP_LABEL[comp]||comp) + '</span>';
+    if (tk.human_interventions > 0) h += '<span class="badge badge-blocked">🙋 ' + tk.human_interventions + '</span>';
+    h += '</div>';
+    if (tk.completion_reason) h += '<div class="muted" style="font-size:11px">' + esc(tk.completion_reason) + '</div>';
+
+    // 嵌套子任务：默认折叠
+    const subs = data.task_subitems.filter(s => s.belongs_to === tk.query);
+    if (subs.length) {{
+      const done = subs.filter(s => s.status === 'completed').length;
+      h += '<details class="section"><summary>子任务 <span class="cnt">' + done + ' / ' + subs.length + ' 完成</span></summary><div class="detail-body">';
+      h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">耗时</th></tr></thead><tbody>';
+      subs.forEach(s => {{
+        h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td></tr>';
+      }});
+      h += '</tbody></table></div></details>';
+    }}
     h += '</div>';
   }});
   h += '</div>';
 
-  // ===== Skill 触发时间线 =====
-  h += '<div class="panel"><h2>Skill 触发时间线</h2>';
+  // ===== 次要信息（默认折叠） =====
+
+  // Skill 时间线
+  h += '<details class="section"><summary>Skill 触发时间线 <span class="cnt">' + data.skill_events.length + ' 次</span></summary><div class="detail-body">';
   if (data.skill_events.length === 0) {{
     h += '<div class="empty">本会话未触发任何 Skill</div>';
   }} else {{
@@ -841,32 +975,26 @@ def render_html(data):
       h += '<tr><td class="mono">' + fmtTime(e.ts) + '</td><td>⚡ ' + esc(e.skill_name) + '</td></tr>';
     }});
     h += '</tbody></table>';
-    if (data.task_count > 0) {{
-      h += '<div class="muted" style="margin-top:10px;font-size:12px">注意：Skill 工具调用可能发生在用户指令之前（agent 预加载），此时其时间戳会归属于较早的那个任务，不代表该任务实际上依赖此 Skill。</div>';
-    }}
   }}
-  h += '</div>';
+  h += '</div></details>';
 
-  // ===== 人工介入 =====
-  h += '<div class="panel"><h2>人工介入（AskUserQuestion）</h2>';
+  // 人工介入
+  h += '<details class="section"><summary>人工介入（AskUserQuestion） <span class="cnt">' + (data.total_human_interventions || 0) + ' 次</span></summary><div class="detail-body">';
   if (!data.human_interventions || data.human_interventions.length === 0) {{
     h += '<div class="empty">本会话 agent 未反向追问用户</div>';
   }} else {{
-    h += '<div class="muted" style="font-size:12px;margin-bottom:10px">共 ' + data.total_human_interventions + ' 次——agent 中途停下向用户澄清，属「人工介入」信号。</div>';
     data.human_interventions.forEach(q => {{
-      h += '<div class="task-card" style="margin-bottom:10px">';
+      h += '<div class="task-card" style="margin-bottom:8px">';
       h += '<div class="q">🙋 ' + esc(q.question) + '</div>';
       h += '<div class="meta">' + fmtTime(q.ts) + (q.header ? ' · ' + esc(q.header) : '') + '</div>';
-      if (q.options && q.options.length) {{
-        h += '<div class="muted" style="font-size:12px">选项：' + q.options.map(o => esc(o)).join(' / ') + '</div>';
-      }}
+      if (q.options && q.options.length) h += '<div class="muted" style="font-size:11px">选项：' + q.options.map(o => esc(o)).join(' / ') + '</div>';
       h += '</div>';
     }});
   }}
-  h += '</div>';
+  h += '</div></details>';
 
-  // ===== 阻塞清单 =====
-  h += '<div class="panel"><h2>阻塞清单</h2>';
+  // 阻塞清单
+  h += '<details class="section"><summary>阻塞清单 <span class="cnt">' + data.blocks.length + ' 处</span></summary><div class="detail-body">';
   if (data.blocks.length === 0) {{
     h += '<div class="empty">未检测到阻塞（全程无 blocked 状态）</div>';
   }} else {{
@@ -876,69 +1004,18 @@ def render_html(data):
     }});
     h += '</tbody></table>';
   }}
-  h += '</div>';
+  h += '</div></details>';
 
-  // ===== 任务列表（按用户对话） =====
-  h += '<div class="panel"><h2>任务列表（按用户对话）</h2>';
-  data.tasks.forEach((tk, i) => {{
-    h += '<div class="task-card">';
-    h += '<div class="q">#' + (i+1) + ' ' + esc(tk.query) + '</div>';
-    h += '<div class="meta">' + fmtTime(tk.start_ts) + ' → ' + fmtTime(tk.end_ts) + ' · 耗时 ' + fmtDur(tk.duration_s) + '</div>';
-    h += '<div class="meta">';
-    if (tk.skill_loaded) {{
-      h += '<span class="badge badge-skill">⚡ 显式加载 ' + esc(tk.skill_loaded) + '</span>';
-    }}
-    if (tk.skill_via_script) {{
-      h += '<span class="badge badge-skill">📜 脚本直用 ' + esc(tk.skill_via_script) + '</span>';
-    }}
-    if (!tk.skill_loaded && !tk.skill_via_script) {{
-      h += '<span class="badge badge-noskill">未使用 Skill</span>';
-    }}
-    h += '<span class="badge badge-noskill">工具 ' + tk.tool_calls + ' 次</span>';
-    h += '<span class="badge badge-noskill">Input ' + fmtTok(tk.tokens.input) + '</span>';
-    h += '<span class="badge badge-noskill">Output ' + fmtTok(tk.tokens.output) + '</span>';
-    h += '</div>';
-
-    // 完成状态
-    const COMP_LABEL = {{'completed': '已完成', 'partial': '部分完成', 'interrupted': '疑似中断'}};
-    const COMP_CLASS = {{'completed': 'badge-skill', 'partial': 'badge-noskill', 'interrupted': 'badge-blocked'}};
-    const comp = tk.completion || 'interrupted';
-    h += '<div class="meta" style="margin-bottom:6px">';
-    h += '<span class="badge ' + (COMP_CLASS[comp]||'badge-noskill') + '">' + (comp==='completed'?'✓':comp==='partial'?'◐':'✗') + ' ' + (COMP_LABEL[comp]||comp) + '</span>';
-    if (tk.completion_reason) h += '<span class="muted" style="font-size:11px">' + esc(tk.completion_reason) + '</span>';
-    if (tk.human_interventions > 0) h += '<span class="badge badge-blocked">🙋 人工介入 ' + tk.human_interventions + ' 次</span>';
-    h += '</div>';
-
-    // 该任务的嵌套子任务
-    const subs = data.task_subitems.filter(s => s.belongs_to === tk.query);
-    if (subs.length) {{
-      h += '<table style="margin-top:8px"><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">耗时</th></tr></thead><tbody>';
-      subs.forEach(s => {{
-        h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td></tr>';
-      }});
-      h += '</tbody></table>';
-    }}
-    h += '</div>';
-  }});
-  h += '</div>';
-
-  // ===== TaskList 子任务执行追踪 =====
-  h += '<div class="panel"><h2>TaskList 子任务执行追踪</h2>';
-  if (data.task_subitems.length === 0) {{
-    h += '<div class="empty">该会话未创建 TaskList（无 TaskCreate/TaskUpdate）</div>';
-  }} else {{
+  // TaskList 追踪表（仅在有 TaskCreate 时渲染）
+  if (data.task_subitems.length > 0) {{
+    h += '<details class="section"><summary>TaskList 子任务执行追踪 <span class="cnt">' + data.task_subitems.length + ' 项</span></summary><div class="detail-body">';
     h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">耗时</th><th>归属任务</th></tr></thead><tbody>';
     data.task_subitems.forEach(s => {{
-      h += '<tr>';
-      h += '<td>' + esc(s.subject) + '</td>';
-      h += '<td class="num status-icon">' + statusCell(s) + '</td>';
-      h += '<td class="num">' + fmtDur(s.duration_s) + '</td>';
-      h += '<td class="muted">' + esc(s.belongs_to || '-') + '</td>';
-      h += '</tr>';
+      h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td><td class="muted">' + esc(s.belongs_to || '-') + '</td></tr>';
     }});
     h += '</tbody></table>';
+    h += '</div></details>';
   }}
-  h += '</div>';
 
   root.innerHTML = h;
 }})();
@@ -982,8 +1059,11 @@ def main():
     if data.get("airlab"):
         markup = ""
         if data.get("cost_analysis") and data["cost_analysis"].get("markup"):
-            markup = f" | 加价 {data['cost_analysis']['markup']:.3f}x"
-        print(f"成本: ¥{data.get('cost_usd', 0):.4f} | turns: {data.get('turns', '-')} | 总耗时: {_fmt_duration(data['duration_s'])}{markup}")
+            ca = data["cost_analysis"]
+            markup = f" | 加价(本次) {ca['markup']:.3f}x"
+            if ca.get("stable_markup"):
+                markup += f" (稳定值 {ca['stable_markup']:.3f}x)"
+        print(f"成本: CNY {data.get('cost_usd', 0):.4f} | turns: {data.get('turns', '-')} | 总耗时: {_fmt_duration(data['duration_s'])}{markup}")
     else:
         print(f"子任务: {data['completed_sub']}/{data['total_sub']} 完成 | 阻塞: {len(data['blocks'])}")
     print()
