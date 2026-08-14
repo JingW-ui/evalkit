@@ -935,8 +935,12 @@ def render_html(data):
   h += '<div class="sub mono">' + esc(data.session_id) + '</div>';
   h += '<div class="hero-grid">';
   h += '<div class="hitem"><div class="v">' + data.task_count + '</div><div class="k">真实任务数</div></div>';
-  h += '<div class="hitem"><div class="v">' + fmtDur(data.active_s) + '</div><div class="k">模型活跃耗时</div></div>';
-  h += '<div class="hitem"><div class="v">' + fmtDur(data.wait_s) + '</div><div class="k">等待人输入</div></div>';
+  if (data.airlab) {{
+    h += '<div class="hitem"><div class="v">' + fmtDur(data.duration_s) + '</div><div class="k">总耗时</div></div>';
+  }} else {{
+    h += '<div class="hitem"><div class="v">' + fmtDur(data.active_s) + '</div><div class="k">模型活跃耗时</div></div>';
+    h += '<div class="hitem"><div class="v">' + fmtDur(data.wait_s) + '</div><div class="k">等待人输入</div></div>';
+  }}
   h += '<div class="hitem"><div class="v">' + (data.task_count ? (100*data.skill_used_tasks/data.task_count).toFixed(0) + '%' : '-') + '</div><div class="k">Skill 使用率</div></div>';
   h += '<div class="hitem"><div class="v">' + fmtTok(tok.input + tok.cache_read + tok.output) + '</div><div class="k">总 Token</div></div>';
   h += '<div class="hitem"><div class="v">' + data.total_tool_calls + '</div><div class="k">工具调用总数</div></div>';
@@ -1019,7 +1023,11 @@ def render_html(data):
     h += '<div class="task-card">';
     h += '<div class="q">#' + (i+1) + ' ' + esc(tk.query) + '</div>';
     h += '<div class="meta">' + fmtTime(tk.start_ts) + ' → ' + fmtTime(tk.end_ts);
-    h += ' · 活跃 ' + fmtDur(tk.active_s) + ' · 等待 ' + fmtDur(tk.wait_s);
+    if (!data.airlab) {{
+      h += ' · 活跃 ' + fmtDur(tk.active_s) + ' · 等待 ' + fmtDur(tk.wait_s);
+    }} else {{
+      h += ' · 耗时 ' + fmtDur(tk.duration_s);
+    }}
     h += '</div>';
     h += '<div class="meta">';
     const comp = tk.completion || 'interrupted';
