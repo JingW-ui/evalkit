@@ -111,6 +111,11 @@ def scan_single_session(jsonl_path):
     updates = []            # 所有 TaskUpdate（taskId, status, ts）
     skill_events = []       # {skill_name, ts}
 
+    # 人工介入（AskUserQuestion）+ 任务完成判定
+    human_interventions = []     # {header, question, options, ts}
+    stop_reasons = []            # 有序 stop_reason（含时间戳）
+    final_texts = []             # 每轮 assistant 的最终 text 合并（用于完成判定）
+
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -147,6 +152,9 @@ def scan_single_session(jsonl_path):
                         "skill_count": 0,
                         "skill_via_script": None,    # 直接 Bash/Read 引用 skills/<名>/ 目录判定的 skill 名（首次）
                         "skill_via_script_count": 0,
+                        "human_interventions": 0,    # 该任务内 AskUserQuestion 次数
+                        "stop_reason": None,         # 该任务最后一条 assistant 的 stop_reason
+                        "has_final_text": False,     # 该任务是否有最终 text 输出（非工具调用）
                     }
                     tasks.append(cur_task)
 
@@ -155,6 +163,18 @@ def scan_single_session(jsonl_path):
                 model = msg.get("model", "")
                 if model:
                     model_usage[model] = model_usage.get(model, 0) + 1
+
+                # stop_reason + 最终 text（用于任务完成判定）
+                sr = msg.get("stop_reason", "")
+                stop_reasons.append({"stop_reason": sr, "ts": ts})
+                if cur_task is not None:
+                    cur_task["stop_reason"] = sr
+                # 看这轮有没有 text block（非工具调用）
+                for blk in msg.get("content", []):
+                    if isinstance(blk, dict) and blk.get("type") == "text" and blk.get("text", "").strip():
+                        if cur_task is not None:
+                            cur_task["has_final_text"] = True
+                        break
 
                 usage = msg.get("usage", {})
                 ui = usage.get("input_tokens", 0)
@@ -204,6 +224,20 @@ def scan_single_session(jsonl_path):
                                 cur_task["skill_via_script_count"] += 1
                                 if cur_task["skill_via_script"] is None:
                                     cur_task["skill_via_script"] = sk_name
+
+                    if name == "AskUserQuestion":
+                        # 人工介入检测：agent 中途反向追问用户
+                        qs = inp.get("questions", [])
+                        for q in qs:
+                            opts = [o.get("label", "") for o in q.get("options", [])]
+                            human_interventions.append({
+                                "header": q.get("header", ""),
+                                "question": q.get("question", ""),
+                                "options": opts,
+                                "ts": ts,
+                            })
+                        if cur_task is not None:
+                            cur_task["human_interventions"] += len(qs) if qs else 1
 
                     if name == "TaskCreate":
                         creates.append({
@@ -297,6 +331,25 @@ def scan_single_session(jsonl_path):
         t1 = _parse_ts(tk["end_ts"])
         tk["duration_s"] = (t1 - t0) if (t0 is not None and t1 is not None) else None
 
+    # ===== 任务完成判定（启发式） =====
+    # 判据：has_final_text（输出了最终结论文本）优先视为「已完成」；
+    # stop_reason == end_turn 且 has_final_text 更可信；tool_use 结尾且无 text → 疑似中断。
+    for tk in tasks:
+        has_text = tk.get("has_final_text", False)
+        stop = tk.get("stop_reason", "")
+        if has_text and stop == "end_turn":
+            tk["completion"] = "completed"
+            tk["completion_reason"] = "有最终结论文本 + 正常收尾"
+        elif has_text:
+            tk["completion"] = "completed"
+            tk["completion_reason"] = "有最终结论文本"
+        elif stop == "end_turn":
+            tk["completion"] = "partial"
+            tk["completion_reason"] = "正常收尾但无明确文本结论"
+        else:
+            tk["completion"] = "interrupted"
+            tk["completion_reason"] = "以工具调用结尾，未见最终结论"
+
     # 会话总耗时
     session_duration = None
     t_first = _parse_ts(ts_first)
@@ -323,6 +376,8 @@ def scan_single_session(jsonl_path):
         "blocks": blocks,
         "completed_sub": completed_sub,
         "total_sub": len(task_subitems),
+        "human_interventions": human_interventions,
+        "total_human_interventions": len(human_interventions),
     }
 
 
@@ -510,6 +565,7 @@ def render_html(data):
   h += '<div class="hitem"><div class="v">' + (data.task_count ? (100*data.skill_used_tasks/data.task_count).toFixed(0) + '%' : '-') + '</div><div class="k">Skill 使用率（含脚本直用）</div></div>';
   h += '<div class="hitem"><div class="v">' + fmtTok(tok.input + tok.cache_read + tok.output) + '</div><div class="k">总 Token</div></div>';
   h += '<div class="hitem"><div class="v">' + data.total_tool_calls + '</div><div class="k">工具调用总数</div></div>';
+  h += '<div class="hitem"><div class="v">' + (data.total_human_interventions || 0) + '</div><div class="k">人工介入次数</div></div>';
   h += '</div>';
   h += '</div>';
 
@@ -580,6 +636,24 @@ def render_html(data):
   }}
   h += '</div>';
 
+  // ===== 人工介入 =====
+  h += '<div class="panel"><h2>人工介入（AskUserQuestion）</h2>';
+  if (!data.human_interventions || data.human_interventions.length === 0) {{
+    h += '<div class="empty">本会话 agent 未反向追问用户</div>';
+  }} else {{
+    h += '<div class="muted" style="font-size:12px;margin-bottom:10px">共 ' + data.total_human_interventions + ' 次——agent 中途停下向用户澄清，属「人工介入」信号。</div>';
+    data.human_interventions.forEach(q => {{
+      h += '<div class="task-card" style="margin-bottom:10px">';
+      h += '<div class="q">🙋 ' + esc(q.question) + '</div>';
+      h += '<div class="meta">' + fmtTime(q.ts) + (q.header ? ' · ' + esc(q.header) : '') + '</div>';
+      if (q.options && q.options.length) {{
+        h += '<div class="muted" style="font-size:12px">选项：' + q.options.map(o => esc(o)).join(' / ') + '</div>';
+      }}
+      h += '</div>';
+    }});
+  }}
+  h += '</div>';
+
   // ===== 阻塞清单 =====
   h += '<div class="panel"><h2>阻塞清单</h2>';
   if (data.blocks.length === 0) {{
@@ -612,6 +686,16 @@ def render_html(data):
     h += '<span class="badge badge-noskill">工具 ' + tk.tool_calls + ' 次</span>';
     h += '<span class="badge badge-noskill">Input ' + fmtTok(tk.tokens.input) + '</span>';
     h += '<span class="badge badge-noskill">Output ' + fmtTok(tk.tokens.output) + '</span>';
+    h += '</div>';
+
+    // 完成状态
+    const COMP_LABEL = {{'completed': '已完成', 'partial': '部分完成', 'interrupted': '疑似中断'}};
+    const COMP_CLASS = {{'completed': 'badge-skill', 'partial': 'badge-noskill', 'interrupted': 'badge-blocked'}};
+    const comp = tk.completion || 'interrupted';
+    h += '<div class="meta" style="margin-bottom:6px">';
+    h += '<span class="badge ' + (COMP_CLASS[comp]||'badge-noskill') + '">' + (comp==='completed'?'✓':comp==='partial'?'◐':'✗') + ' ' + (COMP_LABEL[comp]||comp) + '</span>';
+    if (tk.completion_reason) h += '<span class="muted" style="font-size:11px">' + esc(tk.completion_reason) + '</span>';
+    if (tk.human_interventions > 0) h += '<span class="badge badge-blocked">🙋 人工介入 ' + tk.human_interventions + ' 次</span>';
     h += '</div>';
 
     // 该任务的嵌套子任务
