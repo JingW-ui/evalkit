@@ -24,8 +24,10 @@ from pathlib import Path
 def scan_session(jsonl_path: str) -> dict:
     """
     扫描一个 session，返回：
-      - session_id, token 总量, 逐轮 trace（含增量、是否雪球、该轮 prompt）
+      - session_id, token 总量, 逐轮 trace（含增量、是否雪球、该轮 prompt、timestamp）
       - 异常信号列表
+      - 时间线（首条 user → 末条事件）
+      - task_list（TaskCreate/TaskUpdate 追踪）
     """
     path = Path(jsonl_path)
     if not path.exists():
@@ -45,6 +47,14 @@ def scan_session(jsonl_path: str) -> dict:
     user_turns = []
     pending_prompt = None  # 当前待关联到下一轮 assistant 的 user prompt
 
+    # 时间线
+    first_event_ts = None
+    last_event_ts = None
+
+    # Task List 追踪
+    task_list = []  # [{id, subject, description, status, created_at, updated_at, duration_s}]
+    task_map = {}   # id → task
+
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -56,6 +66,13 @@ def scan_session(jsonl_path: str) -> dict:
                 continue
 
             t = obj.get("type", "")
+            ts_str = obj.get("timestamp")
+
+            # 时间线
+            if ts_str:
+                if not first_event_ts:
+                    first_event_ts = ts_str
+                last_event_ts = ts_str
 
             # 记录 user prompt（用于定位雪球点）
             if t == "user":
@@ -80,19 +97,68 @@ def scan_session(jsonl_path: str) -> dict:
                 round_tokens = input_t + cache_t
                 total_tokens += round_tokens
 
-                # 检测 Skill 加载
+                # 检测 Skill 加载 + TaskCreate/TaskUpdate
                 for block in msg.get("content", []):
                     if isinstance(block, dict) and block.get("type") == "tool_use":
-                        if block.get("name") == "Skill" and not skill_loaded:
-                            skill_loaded = block.get("input", {}).get("skill", "")
+                        name = block.get("name", "")
+                        inp = block.get("input", {})
+                        if name == "Skill" and not skill_loaded:
+                            skill_loaded = inp.get("skill", "")
+                        elif name == "TaskCreate":
+                            task_id = inp.get("taskId", inp.get("id", ""))
+                            task = {
+                                "id": task_id,
+                                "subject": inp.get("subject", ""),
+                                "description": inp.get("description", ""),
+                                "status": "pending",
+                                "created_at": ts_str,
+                                "updated_at": ts_str,
+                                "completed_at": None,
+                            }
+                            task_list.append(task)
+                            task_map[task_id] = task
+                        elif name == "TaskUpdate":
+                            task_id = inp.get("taskId", inp.get("id", ""))
+                            status = inp.get("status", "")
+                            if task_id in task_map:
+                                task = task_map[task_id]
+                                task["status"] = status
+                                task["updated_at"] = ts_str
+                                if status == "completed":
+                                    task["completed_at"] = ts_str
 
                 traces.append({
                     "round": len(traces) + 1,
                     "round_tokens": round_tokens,
                     "model": model,
-                    "prompt": pending_prompt,  # 关联该轮触发 prompt
+                    "prompt": pending_prompt,
+                    "timestamp": ts_str,
                 })
                 pending_prompt = None  # 清空，避免重复关联
+
+    # 计算总耗时
+    duration_s = 0
+    if first_event_ts and last_event_ts:
+        try:
+            from datetime import datetime
+            t1 = datetime.fromisoformat(first_event_ts.replace("Z", "+00:00"))
+            t2 = datetime.fromisoformat(last_event_ts.replace("Z", "+00:00"))
+            duration_s = (t2 - t1).total_seconds()
+        except Exception:
+            duration_s = 0
+
+    # 计算每个 task 的耗时
+    for task in task_list:
+        task_duration = 0
+        if task.get("created_at") and task.get("completed_at"):
+            try:
+                from datetime import datetime
+                t1 = datetime.fromisoformat(task["created_at"].replace("Z", "+00:00"))
+                t2 = datetime.fromisoformat(task["completed_at"].replace("Z", "+00:00"))
+                task_duration = (t2 - t1).total_seconds()
+            except Exception:
+                task_duration = 0
+        task["duration_s"] = task_duration
 
     # 计算增量 + 异常信号
     increments = []
@@ -171,7 +237,9 @@ def scan_session(jsonl_path: str) -> dict:
         "max_single_round_idx": max_single_round_idx,
         "snowball_count": snowball_count,
         "anomalies": anomalies,
-        "traces": traces,        # 完整 traces（含 prompt），供四级下钻
+        "duration_s": duration_s,
+        "task_list": task_list,
+        "traces": traces,        # 完整 traces（含 prompt 和 timestamp），供四级下钻
         "user_turns": user_turns,
     }
 
