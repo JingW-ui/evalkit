@@ -19,6 +19,11 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timezone
 
+try:
+    import cost as cost_mod
+except ImportError:
+    cost_mod = None
+
 
 # ===== 颜色主题（GitHub 风格：绿色为主，仅少量红色点缀） =====
 ACCENT = "#2da44e"        # GitHub 绿，主强调色
@@ -381,6 +386,196 @@ def scan_single_session(jsonl_path):
     }
 
 
+# ===== airLab pod 纯文本日志解析 =====
+
+def scan_airlab_log(path):
+    """
+    解析 airLab pod 的 CCAgent 纯文本运行日志，输出与 scan_single_session 同构的 dict。
+
+    与标准 Claude Code JSONL 不同，这种日志是纯文本行，关键差异：
+      - 只有一条用户指令：`prompt='...'`（= 唯一任务）
+      - token 只在结尾 `ResultMessage ... usage={...}` 给总量，无逐轮 token
+      - 工具调用靠 `[CC 🔧 <工具名>] <参数>` 提取
+      - 无 TaskCreate/TaskUpdate，故子任务面板为空
+      - skill 来源：启动行 `skills=['xxx']` + skill 目录脚本直用
+    """
+    txt = Path(path).read_text(encoding="utf-8", errors="replace")
+    lines = txt.splitlines()
+
+    session_id = Path(path).stem
+
+    # --- 任务：唯一 prompt ---
+    prompt_m = re.search(r"prompt='([^']*)'", txt)
+    prompt = prompt_m.group(1).strip() if prompt_m else ""
+
+    # --- skill 配置 ---
+    skills_m = re.search(r"skills=\[([^\]]*)\]", txt)
+    skill_cfg = None
+    if skills_m:
+        skill_cfg = skills_m.group(1).strip().strip("'\"") or None
+
+    # --- 模型 / 起止时间 ---
+    model_m = re.search(r"model=(\S+)", txt)
+    model = model_m.group(1) if model_m else ""
+    ts_first = None
+    ts_last = None
+    tm = re.match(r"\[(\d\d:\d\d:\d\d)\]", lines[0]) if lines else None
+    if tm:
+        ts_first = tm.group(1)
+    tm2 = None
+    for ln in reversed(lines):
+        mm = re.match(r"\[(\d\d:\d\d:\d\d)\]", ln)
+        if mm:
+            tm2 = mm.group(1)
+            break
+    if tm2:
+        ts_last = tm2
+
+    # --- 总耗时 / 成本 / turns / token 总量 ---
+    dur_s = None
+    dm = re.search(r"用时=(\d+)m(\d+)s", txt)
+    if dm:
+        dur_s = int(dm.group(1)) * 60 + int(dm.group(2))
+    cost_m = re.search(r"cost=\$([0-9.]+)", txt)
+    cost = float(cost_m.group(1)) if cost_m else None
+    turns = None
+    turns_m = re.search(r"(?<![a-z_])turns=(\d+)", txt)
+    if turns_m:
+        turns = int(turns_m.group(1))
+    token_input = 0
+    token_cache_read = 0
+    token_cache_write = 0
+    token_output = 0
+    um = re.search(r"usage=\{([^}]*)\}", txt)
+    if um:
+        body = um.group(1)
+        def _g(key):
+            mm = re.search(r"['\"]?" + key + r"['\"]?\s*[:=]\s*(\d+)", body)
+            return int(mm.group(1)) if mm else 0
+        token_input = _g("input_tokens")
+        token_cache_read = _g("cache_read_input_tokens")
+        token_cache_write = _g("cache_creation_input_tokens")
+        token_output = _g("output_tokens")
+
+    # --- 工具调用序列 ---
+    tool_dist = {}
+    tool_seq = []
+    for ln in lines:
+        m = re.search(r"\[CC 🔧 ([^\]]+)\]", ln)
+        if m:
+            name = m.group(1).strip()
+            tool_dist[name] = tool_dist.get(name, 0) + 1
+            tool_seq.append(name)
+
+    total_tool_calls = sum(tool_dist.values())
+
+    # --- skill 事件 ---
+    skill_events = []
+    if skill_cfg:
+        skill_events.append({"skill_name": skill_cfg, "ts": ts_first or ""})
+
+    # --- 脚本直用检测（从工具参数里找 skills/<名>/） ---
+    script_skills = set()
+    for ln in lines:
+        m = re.search(r"\[CC 🔧 ([^\]]+)\] (.*)", ln)
+        if m:
+            arg = m.group(2)
+            sm = _SKILL_DIR_RE.search(arg)
+            if sm:
+                script_skills.add(sm.group(1))
+
+    # --- 人工介入 ---
+    human_interventions = []
+    # airLab pod 日志一般是单指令纯执行；若出现 AskUserQuestion 文本则记录
+    for ln in lines:
+        if "AskUserQuestion" in ln or "你想" in ln or "请选择" in ln:
+            human_interventions.append({
+                "header": "澄清",
+                "question": ln.strip()[:200],
+                "options": [],
+                "ts": "",
+            })
+
+    # --- 结果（完成判定） ---
+    # 完成信号：结尾有「任务已完成」或 ResultMessage 且无明显 error
+    completed = ("任务已完成" in txt or "CC RESULT" in txt) and "Error" not in txt and "Traceback" not in txt
+    final_text = "任务已完成" in txt
+
+    # --- 组装同构 dict ---
+    # 单任务
+    task = {
+        "query": prompt,
+        "start_ts": ts_first or "",
+        "end_ts": ts_last or "",
+        "duration_s": dur_s,
+        "tool_calls": total_tool_calls,
+        "tokens": {
+            "input": token_input, "cache_read": token_cache_read,
+            "cache_write": token_cache_write, "output": token_output,
+        },
+        "skill_loaded": skill_cfg,
+        "skill_count": 1 if skill_cfg else 0,
+        "skill_via_script": sorted(script_skills)[0] if script_skills else None,
+        "skill_via_script_count": len(script_skills),
+        "human_interventions": len(human_interventions),
+        "stop_reason": "end_turn" if final_text else "unknown",
+        "has_final_text": final_text,
+        "completion": "completed" if completed else "interrupted",
+        "completion_reason": "结尾输出「任务已完成」并成功收尾" if completed else "未见完整收尾信号",
+    }
+
+    model_usage = {}
+    if model:
+        model_usage[model] = turns or 0
+
+    skill_used_tasks = 1 if (skill_cfg or script_skills) else 0
+
+    # --- 成本分析：动态反推平台加价系数 ---
+    cost_analysis = None
+    if cost_mod is not None and cost is not None and model:
+        tokens_for_cost = {
+            "input_tokens": token_input,
+            "output_tokens": token_output,
+            "cache_read_input_tokens": token_cache_read,
+            "cache_creation_input_tokens": token_cache_write,
+        }
+        try:
+            cost_analysis = cost_mod.effective_cost(model, cost, tokens_for_cost)
+        except Exception:
+            cost_analysis = None
+
+    return {
+        "session_id": session_id,
+        "jsonl_path": str(path),
+        "range": {"first": ts_first, "last": ts_last},
+        "duration_s": dur_s,
+        "model_usage": model_usage,
+        "tool_dist": tool_dist,
+        "total_tool_calls": total_tool_calls,
+        "tokens": {
+            "input": token_input, "cache_read": token_cache_read,
+            "cache_write": token_cache_write, "output": token_output,
+        },
+        "tasks": [task] if prompt else [],
+        "task_subitems": [],        # pod 日志无 TaskCreate/TaskUpdate
+        "skill_events": skill_events,
+        "skill_triggered_tasks": 1 if skill_cfg else 0,
+        "skill_script_tasks": 1 if script_skills else 0,
+        "skill_used_tasks": skill_used_tasks,
+        "task_count": 1 if prompt else 0,
+        "blocks": [],
+        "completed_sub": 0,
+        "total_sub": 0,
+        "human_interventions": human_interventions,
+        "total_human_interventions": len(human_interventions),
+        # 附加信息（airlab 专属）
+        "cost_usd": cost,
+        "turns": turns,
+        "airlab": True,
+        "cost_analysis": cost_analysis,
+    }
+
+
 # ===== HTML 渲染 =====
 
 def render_html(data):
@@ -584,6 +779,22 @@ def render_html(data):
   h += '<div class="muted" style="margin-top:14px;font-size:12px">Cache 命中率：' + cacheHit + '%</div>';
   h += '</div>';
 
+  // ===== 成本计价（airLab pod 日志专属） =====
+  if (data.airlab && data.cost_analysis) {{
+    const ca = data.cost_analysis;
+    h += '<div class="panel"><h2>成本计价</h2>';
+    h += '<div class="stat-grid">';
+    h += '<div class="stat"><div class="label">实际结算成本</div><div class="value">¥' + ca.actual_cost.toFixed(4) + '</div></div>';
+    h += '<div class="stat"><div class="label">挂牌价理论成本</div><div class="value">¥' + ca.theoretical_cost.toFixed(4) + '</div></div>';
+    h += '<div class="stat"><div class="label">平台加价系数</div><div class="value">' + (ca.markup ? ca.markup.toFixed(3) + 'x' : '-') + '</div></div>';
+    h += '</div>';
+    if (ca.unit_cost) {{
+      h += '<div class="muted" style="margin-top:14px;font-size:12px">该模型实际结算单价（¥/百万 tokens）：输入 ¥' + ca.unit_cost.input.toFixed(2) + ' · 输出 ¥' + ca.unit_cost.output.toFixed(2) + ' · 缓存命中 ¥' + ca.unit_cost.cache_read.toFixed(4) + '</div>';
+    }}
+    h += '<div class="muted" style="margin-top:6px;font-size:12px">加价系数由本日志 (cost, usage) 动态反推：实际成本 ÷（挂牌价 × 模型倍率）。后续遇到新模型也可据此补映射。</div>';
+    h += '</div>';
+  }}
+
   // ===== Skill 触发（两种口径） =====
   h += '<div class="panel"><h2>Skill 触发（两种口径）</h2>';
   h += '<div class="stat-grid">';
@@ -739,23 +950,42 @@ def render_html(data):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="单会话深度评测 HTML 报告")
+    ap = argparse.ArgumentParser(description="单会话深度评测 HTML 报告（支持 Claude Code JSONL 与 airLab pod 文本日志）")
     ap.add_argument(
         "--jsonl",
         default=r"C:\Users\wangjing71\.claude\projects\D--wy-projects-work-4-log\625d0eda-7662-42c8-9091-49603b17e203.jsonl",
-        help="单个 .jsonl 会话日志路径",
+        help="输入日志路径（JSONL 或 airLab pod 文本日志，自动检测）",
     )
     ap.add_argument("--out", default=None, help="输出 HTML 路径，缺省 results/session_report.html")
     args = ap.parse_args()
 
-    data = scan_single_session(args.jsonl)
+    # 格式自动检测：JSONL vs airLab pod 文本日志
+    path = args.jsonl
+    is_airlab = False
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        head = f.read(4096)
+        try:
+            json.loads(head.splitlines()[0])
+        except Exception:
+            is_airlab = True
+
+    if is_airlab:
+        data = scan_airlab_log(path)
+    else:
+        data = scan_single_session(path)
 
     # 终端摘要
     print("=== 单会话评测摘要 ===")
-    print(f"session_id: {data['session_id']}")
+    print(f"session_id: {data['session_id']}" + ("  (airLab pod 日志)" if data.get("airlab") else ""))
     print(f"真实任务数: {data['task_count']} | Skill 触发任务: {data['skill_triggered_tasks']}")
     print(f"工具调用: {data['total_tool_calls']} | token: input {data['tokens']['input']:,} / cache_read {data['tokens']['cache_read']:,} / output {data['tokens']['output']:,}")
-    print(f"子任务: {data['completed_sub']}/{data['total_sub']} 完成 | 阻塞: {len(data['blocks'])}")
+    if data.get("airlab"):
+        markup = ""
+        if data.get("cost_analysis") and data["cost_analysis"].get("markup"):
+            markup = f" | 加价 {data['cost_analysis']['markup']:.3f}x"
+        print(f"成本: ¥{data.get('cost_usd', 0):.4f} | turns: {data.get('turns', '-')} | 总耗时: {_fmt_duration(data['duration_s'])}{markup}")
+    else:
+        print(f"子任务: {data['completed_sub']}/{data['total_sub']} 完成 | 阻塞: {len(data['blocks'])}")
     print()
 
     out = args.out or str(Path(__file__).parent / "results" / "session_report.html")

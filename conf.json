@@ -1,9 +1,32 @@
 {
-  "pricing_per_1k": {
-    "input": 0.003,
-    "output": 0.015,
-    "cache_read": 0.0015,
-    "cache_write": 0.006
+  "pricing": {
+    "currency": "CNY",
+    "note": "锚点单价为 deepseek-v4-flash 官方挂牌价(¥/百万 tokens)，倍率为相对「效果(1x)」档。平台实际结算价从 airLab pod 日志的动态反推(platform_markup)校准，见 cost.py",
+    "anchor_per_1m": {
+      "input": 1.0,
+      "output": 2.0,
+      "cache_read": 0.02,
+      "cache_write": 0.0
+    },
+    "anchor_model": "deepseek-v4-flash",
+    "anchor_multiplier": 0.1,
+    "model_multipliers": {
+      "deepseek-v4-flash": 0.1,
+      "deepseek-flash": 0.1,
+      "deepseek-v4-pro": 0.2,
+      "deepseek-pro": 0.2,
+      "经济": 0.1,
+      "经济-预览版": 0.5,
+      "glm-5.2": 0.6,
+      "qwen3.8-max": 0.7,
+      "qwen3.8-max[1m]": 0.7,
+      "效果": 1.0,
+      "效果-预览版": 1.4,
+      "极致": 1.8,
+      "kimi-k3": 2.1,
+      "kimi-k3[1m]": 2.1
+    },
+    "platform_markup": null
   },
   "default_model": "claude-sonnet-5",
   "default_n": 3,
