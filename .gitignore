@@ -4,9 +4,7 @@ __pycache__/
 *.pyo
 
 # 评测输出产物（每次运行生成，不入库）
-results/*.json
-results/*.md
-results/*.jsonl
+results/
 
 # 运行沙盒（临时产物）
 sandbox/
