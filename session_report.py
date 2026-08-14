@@ -328,9 +328,11 @@ def scan_single_session(jsonl_path):
         status = "pending"
         start_ts = None
         completed_ts = None
+        saw_in_progress = False
         for u in seq:
             if u["status"] == "in_progress":
                 status = "in_progress"
+                saw_in_progress = True
                 if start_ts is None:
                     start_ts = u["ts"]
             elif u["status"] == "completed":
@@ -385,6 +387,7 @@ def scan_single_session(jsonl_path):
             "duration_s": dur,
             "queue_s": queue_s,
             "exec_s": exec_s,
+            "has_explicit_start": saw_in_progress,
             "belongs_to": bel,
             "created_ts": c["ts"],
         })
@@ -652,9 +655,11 @@ def scan_airlab_log(path):
         create_s = _hm_to_s(c["ts"])
         start_s = None
         completed_s = None
+        saw_in_progress = False     # 是否真正出现过 in_progress
         for u in seq:
             if u["status"] == "in_progress":
                 status = "in_progress"
+                saw_in_progress = True
                 if start_s is None:
                     start_s = _hm_to_s(u["ts"])
             elif u["status"] == "completed":
@@ -690,7 +695,7 @@ def scan_airlab_log(path):
             "duration_s": dur,
             "queue_s": queue_s,
             "exec_s": exec_s,
-            "has_explicit_start": start_s is not None and completed_s is not None and _hm_to_s(c["ts"]) != start_s,
+            "has_explicit_start": saw_in_progress,   # 是否有明确 in_progress 起点（无则执行起点为估算）
             "belongs_to": prompt,  # 单任务，全部归属该指令
             "created_ts": c["ts"],
         })
@@ -1136,7 +1141,7 @@ def render_html(data):
       h += '<details class="section"><summary>子任务 <span class="cnt">' + done + ' / ' + subs.length + ' 完成</span></summary><div class="detail-body">';
       h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">排队</th><th class="num">执行</th><th class="num">总耗时</th></tr></thead><tbody>';
       subs.forEach(s => {{
-        h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td>';
+        h += '<tr><td>' + esc(s.subject) + (s.has_explicit_start === false ? ' <span class="muted" title="无 in_progress 起点标记，执行起点为估算">⚠</span>' : '') + '</td><td class="num status-icon">' + statusCell(s) + '</td>';
         h += '<td class="num muted">' + fmtDur(s.queue_s) + '</td><td class="num">' + fmtDur(s.exec_s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td>';
         h += '</tr>';
       }});
@@ -1208,7 +1213,7 @@ def render_html(data):
     h += '<details class="section"><summary>TaskList 子任务执行追踪 <span class="cnt">' + data.task_subitems.length + ' 项</span></summary><div class="detail-body">';
     h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">排队</th><th class="num">执行</th><th class="num">总耗时</th><th>归属任务</th></tr></thead><tbody>';
     data.task_subitems.forEach(s => {{
-      h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td>';
+      h += '<tr><td>' + esc(s.subject) + (s.has_explicit_start === false ? ' <span class="muted" title="无 in_progress 起点标记，执行起点为估算">⚠</span>' : '') + '</td><td class="num status-icon">' + statusCell(s) + '</td>';
       h += '<td class="num muted">' + fmtDur(s.queue_s) + '</td><td class="num">' + fmtDur(s.exec_s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td><td class="muted">' + esc(s.belongs_to || '-') + '</td></tr>';
     }});
     h += '</tbody></table>';
