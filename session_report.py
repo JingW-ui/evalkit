@@ -351,7 +351,7 @@ def scan_single_session(jsonl_path):
         t_completed = _parse_ts(completed_ts) if completed_ts else None
         if t_create is not None and t_completed is not None:
             dur = t_completed - t_create
-        if t_start is not None and t_completed is not None:
+        if t_start is not None and t_completed is not None and saw_in_progress:
             exec_s = t_completed - t_start
         if t_create is not None and t_start is not None:
             queue_s = t_start - t_create
@@ -676,7 +676,8 @@ def scan_airlab_log(path):
         dur = None          # 总耗时：create → completed
         if create_s is not None and completed_s is not None:
             dur = completed_s - create_s
-        if start_s is not None and completed_s is not None:
+        if start_s is not None and completed_s is not None and saw_in_progress:
+            # 仅在有明确 in_progress 起点时才显示执行耗时；否则置 None（展示为 '-'，避免误导）
             exec_s = completed_s - start_s
         if create_s is not None and start_s is not None:
             queue_s = start_s - create_s
@@ -731,18 +732,28 @@ def scan_airlab_log(path):
             })
 
     # --- 结果（完成判定） ---
-    # 关键洞察：airLab pod 日志里「错误/失败」经常出现在探测命令的正常返回中
-    # （如「错误：没有找到进程」= 正常「未安装」结论），不能作为失败信号。
-    # 真正的失败信号是「未正常收尾」（无 CCAgent.run done）+ 崩溃堆栈（Traceback/Exception）。
+    # 关键洞察：airLab pod 日志里「错误/失败」常出现在探测命令正常返回（如「错误：没有找到进程」= 正常「未安装」），
+    # 不能作为失败信号。真正的「崩溃」只有 Traceback 堆栈；「Exception: ... success」是 framework 提前结束但结果可能已成功。
     done_flag = ("CCAgent.run done" in txt)
-    crash_flag = ("Traceback" in txt) or ("Exception" in txt)
+    crash_flag = ("Traceback" in txt)
     result_flag = any(k in txt for k in ("任务已完成", "CC RESULT", "写入 DK 备注", "DK 备注写入", "写 DK 成功", "改验证码", "验证码"))
-    # 完成 = 有正常收尾标记（且无崩溃）或成果落地；崩溃堆栈则判失败
+    # 完成 = 有正常收尾标记或成果落地，且无 Traceback 真崩溃
     completed = (not crash_flag) and (done_flag or result_flag)
     # 兜底：若无崩溃且子任务全部 completed，也视为完成
     if task_subitems and not completed:
         completed = (not crash_flag) and all(s["status"] == "completed" for s in task_subitems)
     final_text = done_flag or result_flag
+
+    # --- 异常信号记录（不以这些判「失败」，仅作为附加信号供后续 agent 判定参考） ---
+    anomalies = []
+    if "Autocompact is thrashing" in txt:
+        anomalies.append("Autocompact thrashing（context 反复 refill，可能有过大 tool output）")
+    if "Exception" in txt:
+        anomalies.append("出现 Exception 字样（可能是 framework 提前结束，见结尾）")
+    if "提前结束" in txt or "提前结束" in txt:
+        anomalies.append("CC 提前结束")
+    if "Traceback" in txt:
+        anomalies.append("Traceback 崩溃堆栈")
 
     # --- 组装同构 dict ---
     # 单任务
@@ -765,6 +776,7 @@ def scan_airlab_log(path):
         "has_final_text": final_text,
         "completion": "completed" if completed else "interrupted",
         "completion_reason": ("正常收尾（CCAgent.run done）且成果落地" if completed else "未见正常收尾或成果落地信号"),
+        "anomalies": anomalies,
     }
 
     model_usage = {}
@@ -813,6 +825,7 @@ def scan_airlab_log(path):
         "total_human_interventions": len(human_interventions),
         "user_interrupts": [],
         "total_user_interrupts": 0,
+        "anomalies": anomalies,
         # 附加信息（airlab 专属）
         "cost_usd": cost,
         "turns": turns,
@@ -1131,8 +1144,10 @@ def render_html(data):
     h += '<span class="badge ' + (COMP_CLASS[comp]||'badge-noskill') + '">' + (COMP_LABEL[comp]||comp) + '</span>';
     if (tk.human_interventions > 0) h += '<span class="badge badge-blocked">🙋 ' + tk.human_interventions + '</span>';
     if (tk.interrupts > 0) h += '<span class="badge badge-blocked">🛑 中断 ' + tk.interrupts + '</span>';
+    if (tk.anomalies && tk.anomalies.length > 0) h += '<span class="badge badge-blocked">⚠ 异常 ' + tk.anomalies.length + '</span>';
     h += '</div>';
     if (tk.completion_reason) h += '<div class="muted" style="font-size:11px">' + esc(tk.completion_reason) + '</div>';
+    if (tk.anomalies && tk.anomalies.length > 0) h += '<div class="muted" style="font-size:11px">⚠ ' + tk.anomalies.map(a => esc(a)).join('；') + '</div>';
 
     // 嵌套子任务：默认折叠
     const subs = data.task_subitems.filter(s => s.belongs_to === tk.query);
