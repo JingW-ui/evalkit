@@ -1,0 +1,70 @@
+# evalkit 判定规则（可人为增补，也可由 orchestrator 全量分析后写回）
+#
+# 本文件是「脚本确定性解析」之外的「语义判定特征/信号」台账：
+# 脚本（session_report.py）只做确定性解析（任务切分 / token / 子任务三段时间 / skill 双口径……），
+# 而那些 keyword 难以覆盖、易误判的「完成态 / 异常归因」语义，交给 LLM + 本规则。
+#
+# 结构分三块：
+#   completion_signals   —— 完成 / 中断 / 完成但有异常 的判定特征
+#   anomaly_signals      —— 异常信号词 → 归因说明
+#   misuse_revisions     —— 历史误判修订记录（脚本踩过的坑，避免重蹈）
+
+version: 1
+
+# ---- 完成态判定特征 ----
+completion_signals:
+  # 正常的「任务成功收尾」特征（满足任一 + 无致命崩溃 = completed）
+  done_markers:
+    - "CCAgent.run done"      # airLab pod 正常收尾标记
+    - "CC RESULT"             # airLab pod 结果标记
+    - "任务已完成"             # 常见人工收尾语
+    - "写入 DK 备注"          # 成果落地
+    - "DK 备注写入"
+    - "写 DK 成功"
+    - "改验证码"
+    - "验证码"
+  # 真正的「崩溃」只有堆栈，不能算入异常信号里再去误判
+  crash_markers:
+    - "Traceback"
+  # 注意：以下 keyword 不是崩溃，禁止用作失败信号
+  not_crash_notes:
+    - "-ErrorAction Silently"     # PowerShell 正常参数，含 "Error" 但不是报错
+    - "错误：没有找到进程"          # 探测命令正常返回（= 未安装），非失败
+    - "Exception: ... success"    # framework 提前结束但结果可能已成功
+
+# ---- 异常信号词 → 归因 ----
+anomaly_signals:
+  - signal: "Autocompact is thrashing"
+    meaning: "context 反复 refill，可能有超大的单条 tool output / 文件读取"
+  - signal: "CC 提前结束"
+    meaning: "framework 层面提前终止，可能伴随 Exception 但成果未必未落地"
+  - signal: "Exception"
+    meaning: "出现 Exception 字样，需结合结尾判断是崩溃还是框架提前结束"
+  - signal: "Traceback"
+    meaning: "真正的崩溃堆栈（Python 报错）"
+  - signal: "compact_boundary / session continued"
+    meaning: "context 紧凑续，可能丢子任务 TaskUpdate 状态标记 → 子任务全 pending 但任务实际完成"
+  - signal: "子任务全 pending 但任务 completed"
+    meaning: "矛盾信号：成果已落地但子任务清单无状态更新，大概率是 context 重续丢失标记，非任务没做"
+
+# ---- 完成/中断矛盾场景（脚本结论 vs 真实情形的对照提示） ----
+conflict_scenarios:
+  - pattern: "completed + 子任务 0/全部 pending"
+    explanation: "成果落地但子任务无状态更新，多为 context 反复 compact 丢失 TaskUpdate 标记，需读全量确认归因，不能仅凭 pending 判失败"
+  - pattern: "完成但有多条 compact_boundary"
+    explanation: "执行过程不健康（context 反复续绕），即使结果成功也应在报告标注「完成但过程有异常」"
+
+# ---- 历史误判修订记录（脚本踩过的坑） ----
+misuse_revisions:
+
+# ---- 历史误判修订记录（脚本踩过的坑） ----
+misuse_revisions:
+  - date: "2026-08-14"
+    before: "用 'Error' in txt 判失败"
+    after: "-ErrorAction Silently 被误判为错误，改为只认 Traceback"
+  - date: "2026-08-14"
+    before: "用 '任务已完成' 关键字判完成"
+    after: "airLab 日志结尾是 CCAgent.run done，无 '任务已完成'，改为认 done 标记"
+  - date: "2026-08-14"
+    before: "用 'Exception' in txt 判崩溃"
+    after: "Exception: success 是框架提前结束但结果成功，改为只认 Traceback 崩溃 + 单列 anomalies 记录异常信号"
