@@ -310,38 +310,60 @@ def scan_single_session(jsonl_path):
 
     # ===== TaskCreate/TaskUpdate 配对（顺序对应） =====
     # TaskCreate 无 id，TaskUpdate 的 task_id 是 "1"~"N"，按出现顺序一一对应
-    update_by_order = []
+    # 按 order 收集完整 update 序列，定位 create/in_progress/completed 三时间点
+    updates_by_order = {}
     for u in updates:
         try:
             order = int(str(u["task_id"]))
         except (ValueError, TypeError):
             order = None
-        update_by_order.append((order, u))
+        updates_by_order.setdefault(order, []).append(u)
 
     task_subitems = []
+    _prev_completed_ts = None   # 供「无 in_progress」回退起点（字符串时间戳）
     for idx, c in enumerate(creates):
         # 第 idx 个子任务（0-based）对应 taskId = idx+1
         target_order = idx + 1
+        seq = updates_by_order.get(target_order, [])
         status = "pending"
-        start_ts = c["ts"]
+        start_ts = None
         completed_ts = None
-        for order, u in update_by_order:
-            if order == target_order:
-                if u["status"] == "in_progress":
-                    status = "in_progress"
+        for u in seq:
+            if u["status"] == "in_progress":
+                status = "in_progress"
+                if start_ts is None:
                     start_ts = u["ts"]
-                elif u["status"] == "completed":
-                    status = "completed"
-                    completed_ts = u["ts"]
-                elif u["status"] == "blocked":
-                    status = "blocked"
+            elif u["status"] == "completed":
+                status = "completed"
+                completed_ts = u["ts"]
+            elif u["status"] == "blocked":
+                status = "blocked"
+        # 执行起点：无 in_progress 时用上一个 completed 时间（避免从 create 算起虚大）
+        if start_ts is None and completed_ts is not None:
+            start_ts = _prev_completed_ts or c["ts"]
 
-        dur = None
-        if start_ts and completed_ts:
-            t0 = _parse_ts(start_ts)
-            t1 = _parse_ts(completed_ts)
-            if t0 is not None and t1 is not None:
-                dur = t1 - t0
+        # 三段耗时
+        dur = None; queue_s = None; exec_s = None
+        t_create = _parse_ts(c["ts"])
+        t_start = _parse_ts(start_ts) if start_ts else None
+        t_completed = _parse_ts(completed_ts) if completed_ts else None
+        if t_create is not None and t_completed is not None:
+            dur = t_completed - t_create
+        if t_start is not None and t_completed is not None:
+            exec_s = t_completed - t_start
+        if t_create is not None and t_start is not None:
+            queue_s = t_start - t_create
+        for k in ("dur", "queue_s", "exec_s"):
+            v = {"dur": dur, "queue_s": queue_s, "exec_s": exec_s}[k]
+            if v is not None and v < 0:
+                if k == "dur":
+                    dur = None
+                elif k == "queue_s":
+                    queue_s = None
+                else:
+                    exec_s = None
+        if completed_ts is not None:
+            _prev_completed_ts = completed_ts
 
         # 归属：找到起始时间之后的第一个用户任务
         bel = None
@@ -361,6 +383,8 @@ def scan_single_session(jsonl_path):
             "description": c["description"],
             "status": status,
             "duration_s": dur,
+            "queue_s": queue_s,
+            "exec_s": exec_s,
             "belongs_to": bel,
             "created_ts": c["ts"],
         })
@@ -601,13 +625,14 @@ def scan_airlab_log(path):
             })
 
     # 配对：第 idx 个 TaskCreate（0-based）对应 taskId = idx+1 的 TaskUpdate
-    update_by_order = {}
+    # 按 order 收集「完整 update 序列」，以便定位 create/in_progress/completed 三个时间点
+    updates_by_order = {}
     for u in updates:
         try:
             order = int(str(u["task_id"]))
         except (ValueError, TypeError):
             order = None
-        update_by_order[order] = u
+        updates_by_order.setdefault(order, []).append(u)
 
     def _hm_to_s(ts):
         """HH:MM:SS → 秒（无日期，按当日）；失败返回 None。"""
@@ -617,34 +642,55 @@ def scan_airlab_log(path):
         except (ValueError, AttributeError):
             return None
 
+    # 供「无 in_progress 任务」回退：记录上一个 completed 的时间点（跨任务滚动）
     task_subitems = []
+    prev_completed_s = None
     for idx, c in enumerate(creates):
         target_order = idx + 1
+        seq = updates_by_order.get(target_order, [])
         status = "pending"
-        start_ts = c["ts"]
-        completed_ts = None
-        for order, u in update_by_order.items():
-            if order == target_order:
-                if u["status"] == "in_progress":
-                    status = "in_progress"
-                    start_ts = u["ts"]
-                elif u["status"] == "completed":
-                    status = "completed"
-                    completed_ts = u["ts"]
-                elif u["status"] == "blocked":
-                    status = "blocked"
-        dur = None
-        t0 = _hm_to_s(start_ts)
-        t1 = _hm_to_s(completed_ts) if completed_ts else None
-        if t0 is not None and t1 is not None:
-            dur = t1 - t0
-            if dur < 0:
-                dur = None  # 跨天或乱序，退化为不显示
+        create_s = _hm_to_s(c["ts"])
+        start_s = None
+        completed_s = None
+        for u in seq:
+            if u["status"] == "in_progress":
+                status = "in_progress"
+                if start_s is None:
+                    start_s = _hm_to_s(u["ts"])
+            elif u["status"] == "completed":
+                status = "completed"
+                completed_s = _hm_to_s(u["ts"])
+            elif u["status"] == "blocked":
+                status = "blocked"
+        # 执行起点：有 in_progress 用它；否则用上一个 completed 时间（避免从 create 算起虚大）
+        if start_s is None and completed_s is not None:
+            start_s = prev_completed_s if prev_completed_s is not None else create_s
+        # 三段
+        queue_s = None      # 排队：create → in_progress
+        exec_s = None       # 执行：in_progress → completed
+        dur = None          # 总耗时：create → completed
+        if create_s is not None and completed_s is not None:
+            dur = completed_s - create_s
+        if start_s is not None and completed_s is not None:
+            exec_s = completed_s - start_s
+        if create_s is not None and start_s is not None:
+            queue_s = start_s - create_s
+        if dur is not None and dur < 0:
+            dur = None
+        if exec_s is not None and exec_s < 0:
+            exec_s = None
+        if queue_s is not None and queue_s < 0:
+            queue_s = None
+        if completed_s is not None:
+            prev_completed_s = completed_s
         task_subitems.append({
             "subject": c["subject"],
             "description": c["description"],
             "status": status,
             "duration_s": dur,
+            "queue_s": queue_s,
+            "exec_s": exec_s,
+            "has_explicit_start": start_s is not None and completed_s is not None and _hm_to_s(c["ts"]) != start_s,
             "belongs_to": prompt,  # 单任务，全部归属该指令
             "created_ts": c["ts"],
         })
@@ -680,9 +726,18 @@ def scan_airlab_log(path):
             })
 
     # --- 结果（完成判定） ---
-    # 完成信号：结尾有「任务已完成」或 ResultMessage 且无明显 error
-    completed = ("任务已完成" in txt or "CC RESULT" in txt) and "Error" not in txt and "Traceback" not in txt
-    final_text = "任务已完成" in txt
+    # 关键洞察：airLab pod 日志里「错误/失败」经常出现在探测命令的正常返回中
+    # （如「错误：没有找到进程」= 正常「未安装」结论），不能作为失败信号。
+    # 真正的失败信号是「未正常收尾」（无 CCAgent.run done）+ 崩溃堆栈（Traceback/Exception）。
+    done_flag = ("CCAgent.run done" in txt)
+    crash_flag = ("Traceback" in txt) or ("Exception" in txt)
+    result_flag = any(k in txt for k in ("任务已完成", "CC RESULT", "写入 DK 备注", "DK 备注写入", "写 DK 成功", "改验证码", "验证码"))
+    # 完成 = 有正常收尾标记（且无崩溃）或成果落地；崩溃堆栈则判失败
+    completed = (not crash_flag) and (done_flag or result_flag)
+    # 兜底：若无崩溃且子任务全部 completed，也视为完成
+    if task_subitems and not completed:
+        completed = (not crash_flag) and all(s["status"] == "completed" for s in task_subitems)
+    final_text = done_flag or result_flag
 
     # --- 组装同构 dict ---
     # 单任务
@@ -704,7 +759,7 @@ def scan_airlab_log(path):
         "stop_reason": "end_turn" if final_text else "unknown",
         "has_final_text": final_text,
         "completion": "completed" if completed else "interrupted",
-        "completion_reason": "结尾输出「任务已完成」并成功收尾" if completed else "未见完整收尾信号",
+        "completion_reason": ("正常收尾（CCAgent.run done）且成果落地" if completed else "未见正常收尾或成果落地信号"),
     }
 
     model_usage = {}
@@ -1079,9 +1134,11 @@ def render_html(data):
     if (subs.length) {{
       const done = subs.filter(s => s.status === 'completed').length;
       h += '<details class="section"><summary>子任务 <span class="cnt">' + done + ' / ' + subs.length + ' 完成</span></summary><div class="detail-body">';
-      h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">耗时</th></tr></thead><tbody>';
+      h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">排队</th><th class="num">执行</th><th class="num">总耗时</th></tr></thead><tbody>';
       subs.forEach(s => {{
-        h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td></tr>';
+        h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td>';
+        h += '<td class="num muted">' + fmtDur(s.queue_s) + '</td><td class="num">' + fmtDur(s.exec_s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td>';
+        h += '</tr>';
       }});
       h += '</tbody></table></div></details>';
     }}
@@ -1149,9 +1206,10 @@ def render_html(data):
   // TaskList 追踪表（仅在有 TaskCreate 时渲染）
   if (data.task_subitems.length > 0) {{
     h += '<details class="section"><summary>TaskList 子任务执行追踪 <span class="cnt">' + data.task_subitems.length + ' 项</span></summary><div class="detail-body">';
-    h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">耗时</th><th>归属任务</th></tr></thead><tbody>';
+    h += '<table><thead><tr><th>子任务</th><th class="num">状态</th><th class="num">排队</th><th class="num">执行</th><th class="num">总耗时</th><th>归属任务</th></tr></thead><tbody>';
     data.task_subitems.forEach(s => {{
-      h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td><td class="muted">' + esc(s.belongs_to || '-') + '</td></tr>';
+      h += '<tr><td>' + esc(s.subject) + '</td><td class="num status-icon">' + statusCell(s) + '</td>';
+      h += '<td class="num muted">' + fmtDur(s.queue_s) + '</td><td class="num">' + fmtDur(s.exec_s) + '</td><td class="num">' + fmtDur(s.duration_s) + '</td><td class="muted">' + esc(s.belongs_to || '-') + '</td></tr>';
     }});
     h += '</tbody></table>';
     h += '</div></details>';
