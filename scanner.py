@@ -43,6 +43,7 @@ def scan_session(jsonl_path: str) -> dict:
     model = ""
     skill_loaded = None
     user_turns = []
+    pending_prompt = None  # 当前待关联到下一轮 assistant 的 user prompt
 
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -61,6 +62,7 @@ def scan_session(jsonl_path: str) -> dict:
                 content = obj.get("message", {}).get("content", "")
                 if isinstance(content, str) and content and not content.startswith("/"):
                     user_turns.append(content[:500])
+                    pending_prompt = content[:500]
 
             if t == "assistant":
                 msg = obj.get("message", {})
@@ -88,7 +90,9 @@ def scan_session(jsonl_path: str) -> dict:
                     "round": len(traces) + 1,
                     "round_tokens": round_tokens,
                     "model": model,
+                    "prompt": pending_prompt,  # 关联该轮触发 prompt
                 })
+                pending_prompt = None  # 清空，避免重复关联
 
     # 计算增量 + 异常信号
     increments = []
@@ -167,8 +171,8 @@ def scan_session(jsonl_path: str) -> dict:
         "max_single_round_idx": max_single_round_idx,
         "snowball_count": snowball_count,
         "anomalies": anomalies,
-        "traces": traces[:200],  # 限制 trace 数量，避免 JSON 过大
-        "user_turns": user_turns[:50],
+        "traces": traces,        # 完整 traces（含 prompt），供四级下钻
+        "user_turns": user_turns,
     }
 
 
@@ -226,6 +230,61 @@ def scan_directory(proj_dir: str, skill_filter: str = None, top: int = 10) -> di
 
     return {
         "sessions": sessions[:top],
+        "summary": summary,
+    }
+
+
+def scan_all(proj_dir: str, skill_filter: str = None) -> dict:
+    """
+    全量扫描（不截断 TopN），供 report_interactive 等需要完整数据的场景使用。
+
+    返回结构与 scan_directory 相同，但 sessions 是全集，且每个 session 的
+    traces 完整（含 prompt）。数据可能较大，仅内部使用。
+    """
+    proj_dir = os.path.expandvars(proj_dir)
+    sessions = []
+
+    for root, dirs, files in os.walk(proj_dir):
+        if "subagents" in root.split(os.sep):
+            continue
+        for f in files:
+            if not f.endswith(".jsonl"):
+                continue
+            p = os.path.join(root, f)
+            s = scan_session(p)
+            if s is None:
+                continue
+            if s["total_tokens"] < 1000:
+                continue
+            if skill_filter and s["skill_loaded"] != skill_filter:
+                continue
+            sessions.append(s)
+
+    sessions.sort(key=lambda x: -x["total_tokens"])
+
+    by_skill = {}
+    for s in sessions:
+        sk = s["skill_loaded"] or "（无skill/纯agent）"
+        by_skill.setdefault(sk, {"count": 0, "total_tokens": 0})
+        by_skill[sk]["count"] += 1
+        by_skill[sk]["total_tokens"] += s["total_tokens"]
+
+    total = sum(s["total_tokens"] for s in sessions)
+
+    summary = {
+        "session_count": len(sessions),
+        "total_tokens": total,
+        "avg_tokens": total // len(sessions) if sessions else 0,
+        "snowball_sessions": sum(1 for s in sessions if s["snowball_count"] > 0),
+        "max_session_tokens": sessions[0]["total_tokens"] if sessions else 0,
+        "by_skill": [
+            {"skill": k, "count": v["count"], "total_tokens": v["total_tokens"]}
+            for k, v in sorted(by_skill.items(), key=lambda x: -x[1]["total_tokens"])
+        ],
+    }
+
+    return {
+        "sessions": sessions,
         "summary": summary,
     }
 
