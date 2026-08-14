@@ -971,8 +971,7 @@ def render_html(data):
       h += '<div class="stat"><div class="label">平台加价（本次）</div><div class="value">' + (ca.markup ? ca.markup.toFixed(3) + 'x' : '-') + '</div><div class="label" style="margin-top:4px">由 (cost, usage) 反推</div></div>';
       h += '<div class="stat"><div class="label">平台加价（稳定值）</div><div class="value">' + (ca.stable_markup ? ca.stable_markup.toFixed(3) + 'x' : '-') + '</div><div class="label" style="margin-top:4px">同模型历史样本中位数</div></div>';
     }} else {{
-      h += '<div class="stat"><div class="label">估算成本</div><div class="value">' + (ca.estimated_cost !== null && ca.estimated_cost !== undefined ? '¥' + ca.estimated_cost.toFixed(4) : '-') + '</div><div class="label" style="margin-top:4px">挂牌价 ¥' + ca.theoretical_cost.toFixed(4) + '</div></div>';
-      h += '<div class="stat"><div class="label">平台加价（稳定值）</div><div class="value">' + (ca.stable_markup ? ca.stable_markup.toFixed(3) + 'x' : '-') + '</div><div class="label" style="margin-top:4px">' + esc(ca.model || '') + ' 反推样本中位数</div></div>';
+      h += '<div class="stat"><div class="label">挂牌价成本</div><div class="value">¥' + ca.theoretical_cost.toFixed(4) + '</div><div class="label" style="margin-top:4px">' + esc(ca.model || '') + ' · 按官方公开单价</div></div>';
     }}
   }}
 
@@ -982,10 +981,6 @@ def render_html(data):
   if (data.airlab && data.cost_analysis && data.cost_analysis.unit_cost) {{
     const uc = data.cost_analysis.unit_cost;
     h += '<div class="muted" style="margin-top:8px;font-size:11px">实际结算单价（¥/百万 tokens）：输入 ¥' + uc.input.toFixed(2) + ' · 输出 ¥' + uc.output.toFixed(2) + ' · 缓存命中 ¥' + uc.cache_read.toFixed(4) + '</div>';
-  }}
-  // 成本估算（JSONL）副注
-  if (!data.airlab && data.cost_analysis) {{
-    h += '<div class="muted" style="margin-top:8px;font-size:11px">估算成本为「挂牌价理论成本 × 平台稳定加价系数（来自 airLab pod 日志样本中位数）」，无实际账单，仅供量级参考。</div>';
   }}
   h += '<div class="muted" style="margin-top:4px;font-size:11px">Skill「含脚本直用」额外识别了绕开 Skill 工具、直接 Bash/Read 执行 skills/&lt;名&gt;/ 目录下脚本的使用方式（agent 预加载后常不再显式调用 Skill 工具）。</div>';
   h += '</div>';
