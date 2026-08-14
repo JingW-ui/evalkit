@@ -66,6 +66,24 @@ def _is_real_user(content):
     return True
 
 
+def _interrupt_text(content):
+    """从 user 消息 content（string 或 list[text block]）提取「用户中断」的文本；无则返回 ""。"""
+    if isinstance(content, str):
+        return content if "interrupted by user" in content else ""
+    if isinstance(content, list):
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "text":
+                t = blk.get("text", "")
+                if "interrupted by user" in t:
+                    return t
+    return ""
+
+
+def _is_interrupt(content):
+    """判定一条 user 消息是否为「用户中断工具调用」信号。"""
+    return bool(_interrupt_text(content))
+
+
 def _fmt_tokens(n):
     """token 数人类可读：>1亿 → 亿；>1万 → 万；否则千分位。"""
     if n >= 100_000_000:
@@ -123,6 +141,7 @@ def scan_single_session(jsonl_path):
 
     # 人工介入（AskUserQuestion）+ 任务完成判定
     human_interventions = []     # {header, question, options, ts}
+    user_interrupts = []         # {ts, text} —— 用户主动中断工具调用
     stop_reasons = []            # 有序 stop_reason（含时间戳）
     final_texts = []             # 每轮 assistant 的最终 text 合并（用于完成判定）
 
@@ -152,6 +171,12 @@ def scan_single_session(jsonl_path):
             # 真实用户任务：新任务起点
             if t == "user":
                 content = obj.get("message", {}).get("content", "")
+                # 用户中断信号：content 为 [{"type":"text","text":"[Request interrupted by user ...]"}] 或类似
+                # 表示用户主动掐断 agent 正在执行的工具（区别于 AskUserQuestion 的「反向追问」）
+                if _is_interrupt(content):
+                    user_interrupts.append({"ts": ts, "text": _interrupt_text(content)})
+                    if cur_task is not None:
+                        cur_task["interrupts"] = cur_task.get("interrupts", 0) + 1
                 if _is_real_user(content):
                     # 结束上一个任务：用它的最后一条 assistant 时间戳（而非本条 user 时间），
                     # 否则跨夜 / 跨任务的等待空窗会被误算进上一个任务
@@ -168,6 +193,7 @@ def scan_single_session(jsonl_path):
                         "skill_via_script": None,    # 直接 Bash/Read 引用 skills/<名>/ 目录判定的 skill 名（首次）
                         "skill_via_script_count": 0,
                         "human_interventions": 0,    # 该任务内 AskUserQuestion 次数
+                        "interrupts": 0,             # 该任务内「用户中断工具」次数
                         "stop_reason": None,         # 该任务最后一条 assistant 的 stop_reason
                         "has_final_text": False,     # 该任务是否有最终 text 输出（非工具调用）
                         "_events": [],               # 该任务区间内的事件时间戳 (epoch_s, type)
@@ -457,6 +483,8 @@ def scan_single_session(jsonl_path):
         "total_sub": len(task_subitems),
         "human_interventions": human_interventions,
         "total_human_interventions": len(human_interventions),
+        "user_interrupts": user_interrupts,
+        "total_user_interrupts": len(user_interrupts),
         "cost_analysis": cost_analysis,
     }
 
@@ -723,6 +751,8 @@ def scan_airlab_log(path):
         "total_sub": len(task_subitems),
         "human_interventions": human_interventions,
         "total_human_interventions": len(human_interventions),
+        "user_interrupts": [],
+        "total_user_interrupts": 0,
         # 附加信息（airlab 专属）
         "cost_usd": cost,
         "turns": turns,
@@ -945,6 +975,7 @@ def render_html(data):
   h += '<div class="hitem"><div class="v">' + fmtTok(tok.input + tok.cache_read + tok.output) + '</div><div class="k">总 Token</div></div>';
   h += '<div class="hitem"><div class="v">' + data.total_tool_calls + '</div><div class="k">工具调用总数</div></div>';
   h += '<div class="hitem"><div class="v">' + (data.total_human_interventions || 0) + '</div><div class="k">人工介入</div></div>';
+  h += '<div class="hitem"><div class="v">' + (data.total_user_interrupts || 0) + '</div><div class="k">用户中断</div></div>';
   h += '</div>';
   h += '</div>';
 
@@ -1039,6 +1070,7 @@ def render_html(data):
     h += '<span class="badge badge-noskill">out ' + fmtTok(tk.tokens.output) + '</span>';
     h += '<span class="badge ' + (COMP_CLASS[comp]||'badge-noskill') + '">' + (COMP_LABEL[comp]||comp) + '</span>';
     if (tk.human_interventions > 0) h += '<span class="badge badge-blocked">🙋 ' + tk.human_interventions + '</span>';
+    if (tk.interrupts > 0) h += '<span class="badge badge-blocked">🛑 中断 ' + tk.interrupts + '</span>';
     h += '</div>';
     if (tk.completion_reason) h += '<div class="muted" style="font-size:11px">' + esc(tk.completion_reason) + '</div>';
 
@@ -1082,6 +1114,20 @@ def render_html(data):
       h += '<div class="q">🙋 ' + esc(q.question) + '</div>';
       h += '<div class="meta">' + fmtTime(q.ts) + (q.header ? ' · ' + esc(q.header) : '') + '</div>';
       if (q.options && q.options.length) h += '<div class="muted" style="font-size:11px">选项：' + q.options.map(o => esc(o)).join(' / ') + '</div>';
+      h += '</div>';
+    }});
+  }}
+  h += '</div></details>';
+
+  // 用户中断
+  h += '<details class="section"><summary>用户中断（工具执行被用户打断） <span class="cnt">' + (data.total_user_interrupts || 0) + ' 次</span></summary><div class="detail-body">';
+  if (!data.user_interrupts || data.user_interrupts.length === 0) {{
+    h += '<div class="empty">本会话未见用户主动中断工具调用</div>';
+  }} else {{
+    data.user_interrupts.forEach(it => {{
+      h += '<div class="task-card" style="margin-bottom:8px">';
+      h += '<div class="q">🛑 ' + esc(it.text || '用户中断') + '</div>';
+      h += '<div class="meta">' + fmtTime(it.ts) + '</div>';
       h += '</div>';
     }});
   }}
