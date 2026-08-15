@@ -114,16 +114,17 @@ def _fmt_duration(seconds):
 
 
 def _tool_with_param(name, arg_text):
-    """工具名 + 关键参数（脚本名/文件名），用于判级时看到具体动作。
+    """工具名 + 关键脚本参数，用于判级时看到具体执行动作。
 
     例 Bash "python3 uu_remote_auto.py --code 163a163a" → "Bash(uu_remote_auto.py)"
        Read "/tmp/.../SKILL.md" → "Read(SKILL.md)"
-    无法提取关键标识时退回纯工具名。
+    只提取「脚本/可执行」文件（.py/.ps1）；md/json 是文档不视为动作，避免
+    find -name "*.md" 这类探测命令污染工具序列。无法提取时退回纯工具名。
     """
     if not arg_text:
         return name
-    # 提取脚本/文件名：.py/.ps1/.md/.json/文件路径末尾
-    m = re.search(r"([A-Za-z0-9_/.\-]+\.(?:py|ps1|md|json|txt))", arg_text)
+    # 只提取脚本/命令（.py/.ps1），跳过 md/json/txt 文档类
+    m = re.search(r"([A-Za-z0-9_/.\-]+\.(?:py|ps1))", arg_text)
     if m:
         fname = m.group(1)
         base = fname.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]

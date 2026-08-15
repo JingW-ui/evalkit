@@ -204,8 +204,10 @@ def judge_level(data: dict, rules: dict = None) -> dict:
     # 闭环：有 occupy/连接 起点 + 有执行核心动作（脚本/写 dk）。不看 close_session，
     # 因为 airLab POD 模式不调用 close_session（会话由平台统一回收）。
     has_open = any("occupy" in t or "connect" in t for t in tool_seq)
-    # 核心动作：命中脚本型锚点（如 uu_remote_auto.py / dk_note_updater.py）
-    script_anchors_hit = [t for t in hit_anchors if "py" in t or ".py" in t or "dk" in t.lower()]
+    # 核心动作：命中「脚本型锚点」（精确 .py 脚本，如 uu_remote_auto.py / dk_note_updater.py）
+    def _is_script_anchor(t):
+        return ".py" in t or "uu_remote_auto" in t or "dk_note" in t
+    script_anchors_hit = [t for t in hit_anchors if _is_script_anchor(t)]
     closed_loop = has_open and len(script_anchors_hit) >= 1
 
     level = "L1"
