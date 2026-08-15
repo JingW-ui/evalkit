@@ -76,17 +76,13 @@ def make_probe(path: Path, head_n: int = 40, tail_n: int = 40) -> dict:
 # ===== 核心流程 =====
 
 def detect_and_scan(path: Path):
-    """自动检测格式并调用对应 scan，返回 (data, is_airlab)。"""
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        head = f.read(4096)
-        try:
-            json.loads(head.splitlines()[0])
-            is_airlab = False
-        except Exception:
-            is_airlab = True
-    if is_airlab:
-        return sr.scan_airlab_log(str(path)), True
-    return sr.scan_single_session(str(path)), False
+    """自动检测格式并调用对应 scan，返回 (data, kind)。kind ∈ {dsh, airlab, jsonl}"""
+    kind = sr.detect_log_kind(str(path))
+    if kind == "dsh":
+        return sr.scan_dsh_log(str(path)), "dsh"
+    if kind == "airlab":
+        return sr.scan_airlab_log(str(path)), "airlab"
+    return sr.scan_single_session(str(path)), "jsonl"
 
 
 def script_verdict(data: dict) -> dict:
@@ -111,11 +107,11 @@ def script_verdict(data: dict) -> dict:
 
 def run_probe(path_str: str, head_n: int, tail_n: int):
     path = Path(path_str)
-    data, is_airlab = detect_and_scan(path)
+    data, kind = detect_and_scan(path)
     probe = make_probe(path, head_n, tail_n)
     payload = {
         "session_id": data.get("session_id"),
-        "is_airlab": is_airlab,
+        "kind": kind,
         "script_verdict": script_verdict(data),
         "probe": probe,
     }

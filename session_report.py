@@ -133,6 +133,31 @@ def _tool_with_param(name, arg_text):
 
 
 
+# ===== 格式自动检测 =====
+
+def detect_log_kind(path):
+    """检测日志格式：返回 "dsh" / "airlab" / "jsonl"。
+
+    - dsh: 首行是 JSON，且 type 为 session（dsh 流式日志的 session 头部）
+    - airlab: 首行非 JSON（纯文本 pod 日志）
+    - jsonl: 首行是 JSON，但不是 dsh（标准 Claude Code JSONL）
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        head = f.read(8192)
+    first_line = head.splitlines()[0].strip() if head.splitlines() else ""
+    try:
+        obj = json.loads(first_line)
+    except Exception:
+        return "airlab"
+    # dsh 日志特征：首行 type 为 "session"（dsh 流式日志的 session 头），
+    # 或首行是 step/turn/tool/assistant-message 等流式事件。
+    if obj.get("type") == "session":
+        return "dsh"
+    if obj.get("type") in ("assistant/chunk", "tool/call", "tool/result", "user/message", "assistant/message", "step/start"):
+        return "dsh"
+    return "jsonl"
+
+
 # ===== 核心解析 =====
 
 def scan_single_session(jsonl_path):
@@ -877,7 +902,234 @@ def scan_airlab_log(path):
     }
 
 
-# ===== HTML 渲染 =====
+# ===== dsh 流式 JSONL 日志解析 =====
+
+def scan_dsh_log(path):
+    """
+    解析 dsh 环境的流式会话日志，输出与 scan_single_session 同构的 dict。
+
+    dsh 日志与 Claude Code JSONL 的差异：
+      - 字段收在 `data` 下，顶层只有 type/seq/time（time 为毫秒 epoch）
+      - 流式事件：assistant/chunk（含 usage）、text-chunks、tool-call-chunks 等
+      - 真实消息：user/message、assistant/message（content 在 data.message.content 或 data.content）
+      - 工具：tool/call（data.name/arguments）、tool/result（data.message.content[].isError）
+      - usage 字段是驼峰：inputTokens/outputTokens/cacheReadTokens/reasoningTokens
+      - skill 工具名是小写 `skill`（对应 Claude Code 的 `Skill`）
+    """
+    path = Path(path)
+    session_id = path.parent.name  # dsh-session-session-<uuid>
+    lines = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                lines.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    def _data(o):
+        return o.get("data", {}) if isinstance(o.get("data"), dict) else {}
+
+    # --- 时间范围（time 为毫秒 epoch） ---
+    ts_first = None
+    ts_last = None
+    times = [o.get("time") for o in lines if isinstance(o.get("time"), (int, float))]
+    if times:
+        ts_first = min(times)
+        ts_last = max(times)
+    duration_s = None
+    if ts_first is not None and ts_last is not None:
+        duration_s = (ts_last - ts_first) / 1000.0
+
+    # --- 真实用户指令（user/message，排除 runtime-context/skill-reminder/bg-job 噪音） ---
+    tasks = []
+    user_prompts = []
+    for o in lines:
+        if o.get("type") != "user/message":
+            continue
+        d = _data(o)
+        content = d.get("content", [])
+        texts = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                texts.append(b.get("text", ""))
+        full = "\n".join(t).strip() if (t := texts) else ""
+        if not full:
+            continue
+        # 噪音：runtime context / skill reminder / background job
+        if full.startswith("Current runtime context") or full.startswith("<system-reminder>") or full.startswith("background job"):
+            continue
+        user_prompts.append(full)
+
+    # --- 工具调用（tool/call）+ 结果（tool/result） ---
+    tool_dist = {}
+    tool_seq = []
+    tool_results = []   # {name, isError}
+    for o in lines:
+        t = o.get("type")
+        d = _data(o)
+        if t == "tool/call":
+            name = d.get("name", "")
+            if name:
+                if name == "skill":
+                    name = "Skill"  # 归一为 Claude Code 口径
+                elif name == "todo_write":
+                    name = "TodoWrite"
+                arg = d.get("arguments", "") or ""
+                tool_dist[name] = tool_dist.get(name, 0) + 1
+                tool_seq.append(_tool_with_param(name, arg))
+        elif t == "tool/result":
+            msg = d.get("message", {})
+            for b in msg.get("content", []):
+                if b.get("type") == "tool-result":
+                    tool_results.append({"isError": bool(b.get("isError", False))})
+
+    total_tool_calls = sum(tool_dist.values())
+    tool_success = sum(1 for r in tool_results if not r["isError"])
+    tool_fail = sum(1 for r in tool_results if r["isError"])
+
+    # --- skill 事件（tool/call 里 name==skill；或 script 直用） ---
+    skill_events = []
+    script_skills = set()
+    for o in lines:
+        d = _data(o)
+        if o.get("type") == "tool/call" and d.get("name") == "skill":
+            try:
+                arg = json.loads(d.get("arguments", "{}"))
+                sname = arg.get("name", "") or "（未命名）"
+                skill_events.append({"skill_name": sname, "ts": _fmt_epoch(d.get("time") or o.get("time"))})
+            except Exception:
+                pass
+        # 脚本直用检测（Bash/pwsh 参数里引用 skills/<名>/）
+        if o.get("type") == "tool/call":
+            arg = d.get("arguments", "") or ""
+            m = _SKILL_DIR_RE.search(arg)
+            if m:
+                script_skills.add(m.group(1))
+
+    # --- usage（assistant/chunk 里累计，字段驼峰） ---
+    tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
+    model_usage = {}
+    for o in lines:
+        if o.get("type") != "assistant/chunk":
+            continue
+        d = _data(o)
+        chunk = d.get("chunk", {})
+        if chunk.get("type") == "usage":
+            u = chunk.get("usage", {})
+            tokens["input"] += u.get("inputTokens", 0)
+            tokens["cache_read"] += u.get("cacheReadTokens", 0)
+            tokens["output"] += u.get("outputTokens", 0)
+            # cache_write: dsh 无该字段，默认 0
+
+    # 模型：dsh 日志可能在 assistant/message 或 session 里带模型名
+    model_name = ""
+    for o in lines:
+        if o.get("type") == "assistant/message":
+            mm = _data(o).get("message", {})
+            model_name = mm.get("model", "") or model_name
+    if model_name:
+        turns = 0
+        for o in lines:
+            if o.get("type") == "turn/start" or o.get("type") == "step/start":
+                turns += 1
+        model_usage[model_name] = turns or 1
+
+    # --- 完成判定（用 adjudicator；拼接 assistant 文本供 keyword 匹配） ---
+    raw_text = " ".join(
+        b.get("text", "")
+        for o in lines if o.get("type") == "assistant/message"
+        for b in _data(o).get("message", {}).get("content", [])
+        if isinstance(b, dict) and b.get("type") in ("text", "reasoning")
+    )
+
+    if adj is not None:
+        verdict, reason = adj.adjudicate_completion(raw_text, [], kind="airlab")
+        anomalies = adj.detect_anomalies(raw_text)
+    else:
+        verdict = "interrupted" if not user_prompts else "completed"
+        reason = ""
+        anomalies = []
+
+    if verdict == "completed_with_anomaly":
+        completion_state = "completed_with_anomaly"
+    elif verdict == "completed":
+        completion_state = "completed"
+    else:
+        completion_state = "interrupted"
+
+    # --- 组装同构 dict（单任务或按 user_prompts 切） ---
+    single_task = {
+        "query": user_prompts[0] if user_prompts else "",
+        "start_ts": str(ts_first) if ts_first else "",
+        "end_ts": str(ts_last) if ts_last else "",
+        "duration_s": duration_s,
+        "tool_calls": total_tool_calls,
+        "tokens": tokens,
+        "skill_loaded": skill_events[0]["skill_name"] if skill_events else None,
+        "skill_count": len(skill_events),
+        "skill_via_script": sorted(script_skills)[0] if script_skills else None,
+        "skill_via_script_count": len(script_skills),
+        "human_interventions": 0,
+        "interrupts": 0,
+        "completion": completion_state,
+        "completion_reason": reason,
+        "anomalies": anomalies,
+    }
+    tasks = []
+    for i, p in enumerate(user_prompts):
+        t = dict(single_task)
+        t["query"] = p
+        tasks.append(t)
+
+    rule_hits = adj.rule_hits(raw_text, {"tasks": tasks, "task_subitems": []}) if adj else {}
+
+    return {
+        "session_id": session_id,
+        "jsonl_path": str(path),
+        "range": {"first": str(ts_first) if ts_first else None, "last": str(ts_last) if ts_last else None},
+        "duration_s": duration_s,
+        "wait_s": 0.0,
+        "active_s": duration_s,
+        "model_usage": model_usage,
+        "tool_dist": tool_dist,
+        "tool_seq": tool_seq,
+        "total_tool_calls": total_tool_calls,
+        "tool_success": tool_success,
+        "tool_fail": tool_fail,
+        "tokens": tokens,
+        "tasks": tasks,
+        "task_subitems": [],
+        "skill_events": skill_events,
+        "skill_triggered_tasks": 1 if skill_events else 0,
+        "skill_script_tasks": 1 if script_skills else 0,
+        "skill_used_tasks": 1 if (skill_events or script_skills) else 0,
+        "task_count": len(tasks),
+        "blocks": [],
+        "completed_sub": 0,
+        "total_sub": 0,
+        "human_interventions": [],
+        "total_human_interventions": 0,
+        "user_interrupts": [],
+        "total_user_interrupts": 0,
+        "anomalies": anomalies,
+        "rule_hits": rule_hits,
+        "dsh": True,
+        "cost_analysis": None,
+    }
+
+
+def _fmt_epoch(ms):
+    """毫秒 epoch → ISO 字符串；失败返回空串。"""
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(int(ms) / 1000.0, tz=timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
 
 def render_html(data):
     """把解析结果渲染成自包含 HTML。"""
@@ -1330,6 +1582,8 @@ def render_markdown(data: dict) -> str:
     lines.append(f"# 会话评测报告 · {sid}")
     if data.get("airlab"):
         lines.append("> 类型：airLab pod 日志（无人值守纯执行）")
+    elif data.get("dsh"):
+        lines.append("> 类型：dsh 流式会话日志")
     else:
         lines.append("> 类型：Claude Code JSONL 会话")
     lines.append("")
@@ -1347,11 +1601,13 @@ def render_markdown(data: dict) -> str:
     tok = data.get("tokens", {})
     lines.append("## 核心指标")
     lines.append(f"- 真实任务数：{data.get('task_count', 0)}")
-    if data.get("airlab"):
+    if data.get("airlab") or data.get("dsh"):
         lines.append(f"- 总耗时：{_fmt_duration(data.get('duration_s'))}")
     else:
         lines.append(f"- 活跃耗时：{_fmt_duration(data.get('active_s'))} / 等待人输入：{_fmt_duration(data.get('wait_s'))}")
     lines.append(f"- 工具调用：{data.get('total_tool_calls', 0)} 次")
+    if data.get("tool_success") is not None or data.get("tool_fail") is not None:
+        lines.append(f"- 工具成功率：{data.get('tool_success',0)}/{data.get('total_tool_calls',0)} 成功（失败 {data.get('tool_fail',0)}）")
     lines.append(f"- Token：input {_fmt_tokens(tok.get('input',0))} · cache_read {_fmt_tokens(tok.get('cache_read',0))} · output {_fmt_tokens(tok.get('output',0))}")
     lines.append(f"- 成本：{_fmt_cost_short(data)}")
     lines.append(f"- 子任务：{data.get('completed_sub',0)}/{data.get('total_sub',0)} 完成")
@@ -1378,7 +1634,7 @@ def render_markdown(data: dict) -> str:
         lines.append(f"- 完成态：{comp}")
         if tk.get("completion_reason"):
             lines.append(f"- 判定：{tk['completion_reason']}")
-        if not data.get("airlab"):
+        if not data.get("airlab") and not data.get("dsh"):
             lines.append(f"- 活跃 {_fmt_duration(tk.get('active_s'))} / 等待 {_fmt_duration(tk.get('wait_s'))}")
         if tk.get("anomalies"):
             lines.append(f"- ⚠ 异常：{'; '.join(tk['anomalies'])}")
@@ -1437,7 +1693,7 @@ def render_markdown(data: dict) -> str:
 
 
 _CSV_HEADER = ["session_id", "type", "level", "completion", "task_count", "completed_sub",
-               "total_sub", "total_tool_calls", "input_tokens", "cache_read_tokens",
+               "total_sub", "total_tool_calls", "tool_success", "tool_fail", "input_tokens", "cache_read_tokens",
                "output_tokens", "cost", "anomalies_count", "conflicts_count", "skill_count"]
 
 
@@ -1459,6 +1715,8 @@ def render_csv_row(data: dict, rules: dict = None) -> dict:
         "completed_sub": data.get("completed_sub", 0),
         "total_sub": data.get("total_sub", 0),
         "total_tool_calls": data.get("total_tool_calls", 0),
+        "tool_success": data.get("tool_success", ""),
+        "tool_fail": data.get("tool_fail", ""),
         "input_tokens": data.get("tokens", {}).get("input", 0),
         "cache_read_tokens": data.get("tokens", {}).get("cache_read", 0),
         "output_tokens": data.get("tokens", {}).get("output", 0),
@@ -1493,17 +1751,13 @@ def main():
                     help="输出格式（默认 markdown）")
     args = ap.parse_args()
 
-    # 格式自动检测：JSONL vs airLab pod 文本日志
+    # 格式自动检测：dsh 流式 JSONL / Claude Code JSONL / airLab pod 文本日志
     path = args.jsonl
-    is_airlab = False
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        head = f.read(4096)
-        try:
-            json.loads(head.splitlines()[0])
-        except Exception:
-            is_airlab = True
+    kind = detect_log_kind(path)
 
-    if is_airlab:
+    if kind == "dsh":
+        data = scan_dsh_log(path)
+    elif kind == "airlab":
         data = scan_airlab_log(path)
     else:
         data = scan_single_session(path)
