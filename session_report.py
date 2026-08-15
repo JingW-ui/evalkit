@@ -113,6 +113,25 @@ def _fmt_duration(seconds):
     return f"{h} 小时 {m} 分"
 
 
+def _tool_with_param(name, arg_text):
+    """工具名 + 关键参数（脚本名/文件名），用于判级时看到具体动作。
+
+    例 Bash "python3 uu_remote_auto.py --code 163a163a" → "Bash(uu_remote_auto.py)"
+       Read "/tmp/.../SKILL.md" → "Read(SKILL.md)"
+    无法提取关键标识时退回纯工具名。
+    """
+    if not arg_text:
+        return name
+    # 提取脚本/文件名：.py/.ps1/.md/.json/文件路径末尾
+    m = re.search(r"([A-Za-z0-9_/.\-]+\.(?:py|ps1|md|json|txt))", arg_text)
+    if m:
+        fname = m.group(1)
+        base = fname.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        return f"{name}({base})"
+    return name
+
+
+
 # ===== 核心解析 =====
 
 def scan_single_session(jsonl_path):
@@ -128,6 +147,7 @@ def scan_single_session(jsonl_path):
     # 累积量
     model_usage = {}        # model -> 轮数
     tool_dist = {}          # 工具名 -> 次数
+    tool_seq = []           # 有序工具调用序列（供判级 / 工具组合流程记录）
     tokens = {
         "input": 0, "cache_read": 0, "cache_write": 0, "output": 0,
     }
@@ -253,10 +273,12 @@ def scan_single_session(jsonl_path):
                     if not name:
                         continue
                     tool_dist[name] = tool_dist.get(name, 0) + 1
+                    # 工具名 + 关键参数（脚本名），供判级看到具体动作
+                    inp = blk.get("input", {})
+                    arg_text = json.dumps(inp, ensure_ascii=False) if isinstance(inp, dict) else str(inp)
+                    tool_seq.append(_tool_with_param(name, arg_text))
                     if cur_task is not None:
                         cur_task["tool_calls"] += 1
-
-                    inp = blk.get("input", {})
 
                     if name == "Skill":
                         sk = inp.get("skill", "") or "（未命名）"
@@ -504,6 +526,7 @@ def scan_single_session(jsonl_path):
         "active_s": session_active_s,
         "model_usage": model_usage,
         "tool_dist": tool_dist,
+        "tool_seq": tool_seq,
         "total_tool_calls": total_tool_calls,
         "tokens": tokens,
         "tasks": tasks,
@@ -550,8 +573,11 @@ def scan_airlab_log(path):
     # --- skill 配置 ---
     skills_m = re.search(r"skills=\[([^\]]*)\]", txt)
     skill_cfg = None
+    skill_list = []             # 可能多 skill，如 ['uu-remote-auto', 'resolve-remote-resolution']
     if skills_m:
-        skill_cfg = skills_m.group(1).strip().strip("'\"") or None
+        body = skills_m.group(1)
+        skill_list = [s.strip().strip("'\"") for s in body.split(",") if s.strip().strip("'\"")]
+        skill_cfg = skill_list[0] if skill_list else None
 
     # --- 模型 / 起止时间 ---
     model_m = re.search(r"model=(\S+)", txt)
@@ -600,11 +626,12 @@ def scan_airlab_log(path):
     tool_dist = {}
     tool_seq = []
     for ln in lines:
-        m = re.search(r"\[CC 🔧 ([^\]]+)\]", ln)
+        m = re.search(r"\[CC 🔧 ([^\]]+)\] ?(.*)", ln)
         if m:
             name = m.group(1).strip()
+            arg_text = m.group(2).strip()
             tool_dist[name] = tool_dist.get(name, 0) + 1
-            tool_seq.append(name)
+            tool_seq.append(_tool_with_param(name, arg_text))
 
     total_tool_calls = sum(tool_dist.values())
 
@@ -715,8 +742,8 @@ def scan_airlab_log(path):
 
     # --- skill 事件 ---
     skill_events = []
-    if skill_cfg:
-        skill_events.append({"skill_name": skill_cfg, "ts": ts_first or ""})
+    for sk in skill_list:
+        skill_events.append({"skill_name": sk, "ts": ts_first or ""})
 
     # --- 脚本直用检测（从工具参数里找 skills/<名>/） ---
     script_skills = set()
@@ -780,7 +807,7 @@ def scan_airlab_log(path):
             "cache_write": token_cache_write, "output": token_output,
         },
         "skill_loaded": skill_cfg,
-        "skill_count": 1 if skill_cfg else 0,
+        "skill_count": len(skill_list),
         "skill_via_script": sorted(script_skills)[0] if script_skills else None,
         "skill_via_script_count": len(script_skills),
         "human_interventions": len(human_interventions),
@@ -819,6 +846,7 @@ def scan_airlab_log(path):
         "duration_s": dur_s,
         "model_usage": model_usage,
         "tool_dist": tool_dist,
+        "tool_seq": tool_seq,
         "total_tool_calls": total_tool_calls,
         "tokens": {
             "input": token_input, "cache_read": token_cache_read,
@@ -1284,14 +1312,184 @@ def render_html(data):
     return html
 
 
+def _fmt_cost_short(data: dict) -> str:
+    """成本简要文本（airLab 有实际结算，JSONL 只有挂牌价）。"""
+    ca = data.get("cost_analysis")
+    if not ca:
+        return "-"
+    if data.get("airlab"):
+        return f"¥{ca.get('actual_cost', 0):.4f}（挂牌 ¥{ca.get('theoretical_cost', 0):.4f}）"
+    return f"挂牌 ¥{ca.get('theoretical_cost', 0):.4f}"
+
+
+def render_markdown(data: dict) -> str:
+    """把解析结果渲染成 Markdown 报告（回归核心指标 + 判级 + 工具序列）。"""
+    lines = []
+    sid = data.get("session_id", "")
+    lines.append(f"# 会话评测报告 · {sid}")
+    if data.get("airlab"):
+        lines.append("> 类型：airLab pod 日志（无人值守纯执行）")
+    else:
+        lines.append("> 类型：Claude Code JSONL 会话")
+    lines.append("")
+
+    # 判级
+    if adj is not None:
+        lv = adj.judge_level(data)
+        lines.append(f"## 任务判级：**{lv['level']}**（置信度 {lv['confidence']}）")
+        lines.append(f"- {lv['reason']}")
+        lines.append(f"- 命中锚点：{', '.join(lv['hit_anchors']) if lv['hit_anchors'] else '无'}")
+        lines.append(f"- 闭环：{'是' if lv['closed_loop'] else '否'}")
+        lines.append("")
+
+    # 核心指标
+    tok = data.get("tokens", {})
+    lines.append("## 核心指标")
+    lines.append(f"- 真实任务数：{data.get('task_count', 0)}")
+    if data.get("airlab"):
+        lines.append(f"- 总耗时：{_fmt_duration(data.get('duration_s'))}")
+    else:
+        lines.append(f"- 活跃耗时：{_fmt_duration(data.get('active_s'))} / 等待人输入：{_fmt_duration(data.get('wait_s'))}")
+    lines.append(f"- 工具调用：{data.get('total_tool_calls', 0)} 次")
+    lines.append(f"- Token：input {_fmt_tokens(tok.get('input',0))} · cache_read {_fmt_tokens(tok.get('cache_read',0))} · output {_fmt_tokens(tok.get('output',0))}")
+    lines.append(f"- 成本：{_fmt_cost_short(data)}")
+    lines.append(f"- 子任务：{data.get('completed_sub',0)}/{data.get('total_sub',0)} 完成")
+    lines.append(f"- 人工介入：{data.get('total_human_interventions',0)} · 用户中断：{data.get('total_user_interrupts',0)}")
+    lines.append("")
+
+    # skill
+    lines.append("## Skill 触发")
+    skill_events = data.get("skill_events", [])
+    if skill_events:
+        for e in skill_events:
+            lines.append(f"- ⚡ {e.get('skill_name','')}")
+    else:
+        lines.append("- 未触发")
+    lines.append("")
+
+    # 任务列表 + 完成态
+    lines.append("## 任务列表")
+    tasks = data.get("tasks", [])
+    for i, tk in enumerate(tasks):
+        comp = tk.get("completion", "?")
+        comp_icon = {"completed":"✅", "completed_with_anomaly":"⚠️", "interrupted":"❌", "partial":"◐"}.get(comp, "❓")
+        lines.append(f"### #{i+1} {comp_icon} {tk.get('query','')[:60]}")
+        lines.append(f"- 完成态：{comp}")
+        if tk.get("completion_reason"):
+            lines.append(f"- 判定：{tk['completion_reason']}")
+        if not data.get("airlab"):
+            lines.append(f"- 活跃 {_fmt_duration(tk.get('active_s'))} / 等待 {_fmt_duration(tk.get('wait_s'))}")
+        if tk.get("anomalies"):
+            lines.append(f"- ⚠ 异常：{'; '.join(tk['anomalies'])}")
+        lines.append("")
+
+    # 子任务三段耗时
+    subs = data.get("task_subitems", [])
+    if subs:
+        lines.append("## 子任务耗时（排队/执行/总）")
+        lines.append("| 子任务 | 状态 | 排队 | 执行 | 总耗时 |")
+        lines.append("|---|---|---|---|---|")
+        for s in subs:
+            star = " ⚠" if s.get("has_explicit_start") is False else ""
+            lines.append(
+                f"| {s.get('subject','')}{star} | {s.get('status','')} | "
+                f"{_fmt_duration(s.get('queue_s'))} | {_fmt_duration(s.get('exec_s'))} | {_fmt_duration(s.get('duration_s'))} |"
+            )
+        lines.append("")
+
+    # 工具组合调用流程
+    tool_seq = data.get("tool_seq", [])
+    if tool_seq:
+        lines.append("## 工具组合调用流程")
+        lines.append(f"共 {len(tool_seq)} 次，有序：")
+        lines.append("")
+        lines.append("`" + " → ".join(tool_seq) + "`")
+        lines.append("")
+        # 紧凑序列（去连续重复）
+        if adj is not None:
+            compact = adj._compact_seq(tool_seq)
+            lines.append(f"去连续重复后：`{' → '.join(compact)}`")
+            lines.append("")
+
+    # 规则命中
+    rh = data.get("rule_hits", {})
+    anomalies = rh.get("anomalies", [])
+    conflicts = rh.get("conflicts", [])
+    done_markers = rh.get("done_markers_matched", [])
+    if anomalies or conflicts:
+        lines.append("## 规则命中（rules.yaml）")
+        if anomalies:
+            lines.append("### 异常信号")
+            for a in anomalies:
+                lines.append(f"- ⚠ {a}")
+        if conflicts:
+            lines.append("### 矛盾场景")
+            for c in conflicts:
+                lines.append(f"- 🔀 {c}")
+        lines.append("")
+    if done_markers:
+        lines.append("## 完成标记命中")
+        lines.append("、".join(f"`{m}`" for m in done_markers))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+_CSV_HEADER = ["session_id", "type", "level", "completion", "task_count", "completed_sub",
+               "total_sub", "total_tool_calls", "input_tokens", "cache_read_tokens",
+               "output_tokens", "cost", "anomalies_count", "conflicts_count", "skill_count"]
+
+
+def render_csv_row(data: dict, rules: dict = None) -> dict:
+    """产出一行 CSV 数据（dict，键与 _CSV_HEADER 对应）。便于跨会话汇总。"""
+    lv = adj.judge_level(data) if adj else {"level": "-"}
+    tasks = data.get("tasks", [])
+    completion = tasks[0].get("completion", "-") if tasks else "-"
+    skill_count = sum(1 for e in data.get("skill_events", []))
+    rh = data.get("rule_hits", {})
+    ca = data.get("cost_analysis", {})
+    cost = ca.get("actual_cost") if data.get("airlab") else ca.get("theoretical_cost")
+    return {
+        "session_id": data.get("session_id", ""),
+        "type": "airlab" if data.get("airlab") else "jsonl",
+        "level": lv.get("level", "-"),
+        "completion": completion,
+        "task_count": data.get("task_count", 0),
+        "completed_sub": data.get("completed_sub", 0),
+        "total_sub": data.get("total_sub", 0),
+        "total_tool_calls": data.get("total_tool_calls", 0),
+        "input_tokens": data.get("tokens", {}).get("input", 0),
+        "cache_read_tokens": data.get("tokens", {}).get("cache_read", 0),
+        "output_tokens": data.get("tokens", {}).get("output", 0),
+        "cost": round(cost, 4) if isinstance(cost, (int, float)) else "",
+        "anomalies_count": len(rh.get("anomalies", [])),
+        "conflicts_count": len(rh.get("conflicts", [])),
+        "skill_count": skill_count,
+    }
+
+
+def render_csv(data_list: list) -> str:
+    """把多个会话的 data 汇总成 CSV 文本（第一行 header）。"""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=_CSV_HEADER)
+    w.writeheader()
+    for d in data_list:
+        w.writerow(render_csv_row(d))
+    return buf.getvalue()
+
+
 def main():
-    ap = argparse.ArgumentParser(description="单会话深度评测 HTML 报告（支持 Claude Code JSONL 与 airLab pod 文本日志）")
+    ap = argparse.ArgumentParser(description="单会话深度评测报告（支持 Claude Code JSONL 与 airLab pod 文本日志；输出 md/csv/html）")
     ap.add_argument(
         "--jsonl",
         default=r"C:\Users\wangjing71\.claude\projects\D--wy-projects-work-4-log\625d0eda-7662-42c8-9091-49603b17e203.jsonl",
         help="输入日志路径（JSONL 或 airLab pod 文本日志，自动检测）",
     )
-    ap.add_argument("--out", default=None, help="输出 HTML 路径，缺省 results/session_report.html")
+    ap.add_argument("--out", default=None, help="输出文件路径，缺省按 --format 落 results/")
+    ap.add_argument("--format", default="markdown", choices=["markdown", "md", "csv", "html"],
+                    help="输出格式（默认 markdown）")
     args = ap.parse_args()
 
     # 格式自动检测：JSONL vs airLab pod 文本日志
@@ -1314,6 +1512,9 @@ def main():
     print(f"session_id: {data['session_id']}" + ("  (airLab pod 日志)" if data.get("airlab") else ""))
     print(f"真实任务数: {data['task_count']} | Skill 触发任务: {data['skill_triggered_tasks']}")
     print(f"工具调用: {data['total_tool_calls']} | token: input {data['tokens']['input']:,} / cache_read {data['tokens']['cache_read']:,} / output {data['tokens']['output']:,}")
+    if adj is not None:
+        lv = adj.judge_level(data)
+        print(f"判级: {lv['level']} ({lv['reason'][:40]})")
     if data.get("airlab"):
         markup = ""
         if data.get("cost_analysis") and data["cost_analysis"].get("markup"):
@@ -1326,10 +1527,20 @@ def main():
         print(f"子任务: {data['completed_sub']}/{data['total_sub']} 完成 | 阻塞: {len(data['blocks'])}")
     print()
 
-    out = args.out or str(Path(__file__).parent / "results" / "session_report.html")
+    # 输出
+    fmt = args.format
+    if fmt in ("md",):
+        fmt = "markdown"
+    default_ext = {"markdown": ".md", "csv": ".csv", "html": ".html"}[fmt]
+    out = args.out or str(Path(__file__).parent / "results" / ("session_report" + default_ext))
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(render_html(data), encoding="utf-8")
+    if fmt == "markdown":
+        out_path.write_text(render_markdown(data), encoding="utf-8")
+    elif fmt == "csv":
+        out_path.write_text(render_csv([data]), encoding="utf-8")
+    else:
+        out_path.write_text(render_html(data), encoding="utf-8")
     print(f"报告已生成: {out_path}")
 
 

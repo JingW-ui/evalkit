@@ -46,11 +46,39 @@ anomaly_signals:
 # ---- 完成/中断矛盾场景（脚本结论 vs 真实情形的对照提示） ----
 conflict_scenarios:
   - pattern: "completed + 子任务 0/全部 pending"
-    explanation: "成果落地但子任务无状态更新，多为 context 反复 compact 丢失 TaskUpdate 标记，需读全量确认归因，不能仅凭 pending 判失败"
+    explanation: "成果落地但子任务无状态更新，多为 context 反复 compact 丢失 TaskUpdate 标记，需读全量确认归因"
   - pattern: "完成但子任务部分未闭环"
     explanation: "父任务 completed 但子任务清单未全部 completed，可能有 in_progress/pending 残留"
 
-# ---- 历史误判修订记录（脚本踩过的坑） ----
+# ---- L1-L4 任务判级（replay 判据，锚点随 skill 而定） ----
+# 判级由 judge_level 消费：看「工具序列 + 完成态 + 锚点命中」综合定级。
+# anchors 是按 skill 归纳的关键工具锚点；level 判据语义见 ROADMAP 二节。
+level_rules:
+  anchors:
+    uu-remote-auto:
+      - "mcp__airgattai__occupy_device"
+      - "mcp__airgattai__shell"
+      - "uu_remote_auto.py"
+      - "dk_note_updater.py"
+    uu-remote-uninstall:
+      - "mcp__airgattai__occupy_device"
+      - "mcp__airgattai__shell"
+    airgattai:
+      - "mcp__airgattai__list_devices"
+      - "mcp__airgattai__occupy_device"
+  level_criteria:
+    L1:
+      desc: "简单单一动作（锚点命中即成功）"
+      heuristic: "工具序列里仅 1 类锚点动作，无组合"
+    L2:
+      desc: "简单动作组合（锚点 + 步骤完整）"
+      heuristic: "2~3 类锚点动作组合，无完整资源闭环"
+    L3:
+      desc: "混合真实场景（完整闭环 occupy→操作→release）"
+      heuristic: "多锚点 + 完整闭环（occupy_device 起、close_session/release 收）"
+    L4:
+      desc: "不可能/负面任务（诚实度判据）"
+      heuristic: "agent 诚实报告做不到/失败，而非幻觉成功"
 misuse_revisions:
   - date: "2026-08-14"
     before: "用 'Error' in txt 判失败"

@@ -163,3 +163,78 @@ def rule_hits(txt: str, data: dict = None, rules: dict = None) -> dict:
                 "completed 但子任务 0/全部 pending —— 疑似 context 重续丢失状态标记（见 conflict_scenarios）"
             )
     return result
+
+
+def _compact_seq(tool_seq):
+    """把 tool_seq 压成「去连续重复」的紧凑序列，便于看动作组合模式。
+    例 [shell,shell,shell,occupy,shell] -> [shell,occupy,shell]
+    """
+    out = []
+    for t in tool_seq:
+        if not out or out[-1] != t:
+            out.append(t)
+    return out
+
+
+def judge_level(data: dict, rules: dict = None) -> dict:
+    """
+    L1-L4 判级（规则出候选 + 启发式），返回 {level, confidence, reason}。
+
+    判据：工具序列 + 完成态 + 锚点命中 + 闭环（occupy→…→release）。
+    锚点来自 rules.yaml 的 level_rules.anchors（随 skill 可增补）。
+    诚实度（L4）这里只做弱信号——真正判定仍建议 LLM 复核（判级是语义判定）。
+    """
+    rules = rules or load_rules()
+    lr = rules.get("level_rules", {})
+    criteria = lr.get("level_criteria", {})
+    anchors_map = lr.get("anchors", {})
+
+    tool_seq = data.get("tool_seq", []) or []
+    seq = _compact_seq(tool_seq)
+    completions = [t.get("completion", "") for t in (data.get("tasks") or [])]
+    completed = any(c.startswith("completed") for c in completions)
+    interrupted = any(c == "interrupted" for c in completions)
+
+    # 命中的锚点（把 tool_seq 与所有 skill 的 anchors 并集匹配）
+    all_anchors = set()
+    for a in anchors_map.values():
+        all_anchors.update(a)
+    hit_anchors = [t for t in seq if any(t == a or a in t or t in a for a in all_anchors)]
+
+    # 闭环：有 occupy/连接 起点 + 有执行核心动作（脚本/写 dk）。不看 close_session，
+    # 因为 airLab POD 模式不调用 close_session（会话由平台统一回收）。
+    has_open = any("occupy" in t or "connect" in t for t in tool_seq)
+    # 核心动作：命中脚本型锚点（如 uu_remote_auto.py / dk_note_updater.py）
+    script_anchors_hit = [t for t in hit_anchors if "py" in t or ".py" in t or "dk" in t.lower()]
+    closed_loop = has_open and len(script_anchors_hit) >= 1
+
+    level = "L1"
+    reason = ""
+    if interrupted and not completed:
+        # 未完成，无法判为 L3 完整闭环；弱判 L2
+        level = "L2"
+        reason = "未完成（疑似中断），无法确认完整闭环"
+    elif closed_loop and len(set(hit_anchors)) >= 3:
+        level = "L3"
+        reason = "多锚点命中 + 完整闭环（occupy→核心脚本动作）"
+    elif len(set(hit_anchors)) >= 2:
+        level = "L2"
+        reason = "多锚点动作组合，但未见完整闭环"
+    elif len(hit_anchors) == 1:
+        level = "L1"
+        reason = "单一锚点动作"
+    else:
+        level = "L1"
+        reason = "未见明确锚点动作"
+
+    # 置信度：规则启发式判级稳定性一般，诚实度/L4 无法靠规则，需 LLM 复核
+    confidence = "medium" if level in ("L2", "L3") else "low"
+
+    return {
+        "level": level,
+        "confidence": confidence,
+        "reason": reason,
+        "hit_anchors": sorted(set(hit_anchors)),
+        "closed_loop": closed_loop,
+        "compact_tool_seq": seq,
+    }
