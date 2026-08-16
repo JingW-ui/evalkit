@@ -91,3 +91,13 @@ python run_replay_batch.py --scan --skill G66 --task g66_L3_001
 - `file_exists` — 文件产物校验
 
 采信 agent 自证，不引入第二个 LLM 裁判。
+
+## 文档目录
+
+所有开发说明、调研报告、开发日志统一存放于 **docx/**（md 格式）：
+
+- docx/开发说明.md — 项目完整开发说明（架构/模块/API/配置/约定）
+- docx/provider.md — 模型提供商配置说明
+- docx/claude-backend-research.md / docx/dsh-integration-research.md /
+  docx/codemaker-backend-research.md — 各通道调研
+- docx/batch-eval-closed-loop.md — 批量评测闭环
