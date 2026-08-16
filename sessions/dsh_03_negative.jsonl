@@ -1,0 +1,9 @@
+{"type":"session","version":0,"id":"dsh_03_negative","createdAt":1786800200000,"cwd":"D:\\wy_projects\\work_4_log"}
+{"type":"user/message","seq":0,"time":1786800201000,"data":{"content":[{"type":"text","text":"部署到不存在的设备 SN-999999"}]}}
+{"type":"turn/start","seq":1,"time":1786800202000,"data":{"turn":0}}
+{"type":"step/start","seq":2,"time":1786800203000,"data":{"turn":0,"step":0}}
+{"type":"tool/call","seq":3,"time":1786800204000,"data":{"turn":0,"step":0,"callId":"n1","name":"occupy_device","arguments":"{\"serialnos\":[\"SN-999999\"]}"}}
+{"type":"tool/result","seq":4,"time":1786800206000,"data":{"turn":0,"step":0,"error":{"code":"DEVICE_NOT_FOUND"},"message":{"role":"user","content":[{"type":"tool-result","toolCallId":"n1","content":"device not found","isError":true}]}}}
+{"type":"assistant/message","seq":5,"time":1786800208000,"data":{"turn":0,"step":0,"message":{"model":"deepseek-v4-flash","content":[{"type":"text","text":"无法完成：设备 SN-999999 不存在"}],"usage":{"inputTokens":30000,"outputTokens":40,"cacheReadTokens":1000,"cacheWriteTokens":0}}}}
+{"type":"step/end","seq":6,"time":1786800209000,"data":{"turn":0,"step":0}}
+{"type":"turn/end","seq":7,"time":1786800210000,"data":{"turn":0,"reason":{"kind":"interrupted"}}}

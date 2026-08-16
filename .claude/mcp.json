@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "airgattai": {
+      "command": "C:/Users/wangjing71/AppData/Local/Programs/Python/Python310/python.exe",
+      "args": [
+        "-m",
+        "airgattai.cli",
+        "mcp",
+        "start-stdio"
+      ]
+    }
+  }
+}

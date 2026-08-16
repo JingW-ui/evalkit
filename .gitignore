@@ -11,3 +11,21 @@ sandbox/
 
 # 本地配置覆盖
 settings.local.json
+
+# 前端构建产物与依赖
+webui/node_modules/
+webui/dist/
+webui/.vite/
+
+# 临时/调试脚本
+tmp_*.py
+check_*.py
+verify_*.py
+conv_*.py
+investigate.py
+
+# 运行产物
+__pycache__/
+results/
+sandbox/
+settings.local.json

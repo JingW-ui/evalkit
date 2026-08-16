@@ -1,0 +1,13 @@
+{"type":"session","version":0,"id":"dsh_02_deploy","createdAt":1786800100000,"cwd":"D:\\wy_projects\\work_4_log"}
+{"type":"user/message","seq":0,"time":1786800101000,"data":{"content":[{"type":"text","text":"获取可用PC设备并部署"}]}}
+{"type":"turn/start","seq":1,"time":1786800102000,"data":{"turn":0}}
+{"type":"step/start","seq":2,"time":1786800103000,"data":{"turn":0,"step":0}}
+{"type":"tool/call","seq":3,"time":1786800104000,"data":{"turn":0,"step":0,"callId":"p1","name":"list_devices","arguments":"{\"platform\":\"pc\"}"}}
+{"type":"tool/result","seq":4,"time":1786800107000,"data":{"turn":0,"step":0,"message":{"role":"user","content":[{"type":"tool-result","toolCallId":"p1","content":"SN-001, SN-002","isError":false}]}}}
+{"type":"tool/call","seq":5,"time":1786800108000,"data":{"turn":0,"step":0,"callId":"p2","name":"push_file","arguments":"{\"local\":\"D:\\\\pkg\\\\client.exe\",\"remote\":\"C:\\\\mrzh\\\\client.exe\"}"}}
+{"type":"tool/result","seq":6,"time":1786800112000,"data":{"turn":0,"step":0,"error":{"code":"EPERM"},"message":{"role":"user","content":[{"type":"tool-result","toolCallId":"p2","content":"denied","isError":true}]}}}
+{"type":"tool/call","seq":7,"time":1786800113000,"data":{"turn":0,"step":0,"callId":"p3","name":"push_file","arguments":"{\"local\":\"D:\\\\pkg\\\\client.exe\",\"remote\":\"C:\\\\mrzh\\\\client.exe\"}"}}
+{"type":"tool/result","seq":8,"time":1786800118000,"data":{"turn":0,"step":0,"message":{"role":"user","content":[{"type":"tool-result","toolCallId":"p3","content":"ok","isError":false}]}}}
+{"type":"assistant/message","seq":9,"time":1786800120000,"data":{"turn":0,"step":0,"message":{"model":"deepseek-v4-flash","content":[{"type":"text","text":"部署完成"}],"usage":{"inputTokens":60000,"outputTokens":80,"cacheReadTokens":2000,"cacheWriteTokens":0}}}}
+{"type":"step/end","seq":10,"time":1786800121000,"data":{"turn":0,"step":0}}
+{"type":"turn/end","seq":11,"time":1786800122000,"data":{"turn":0,"reason":{"kind":"completed"}}}

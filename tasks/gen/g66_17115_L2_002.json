@@ -1,0 +1,15 @@
+{
+  "task_id": "g66_17115_L2_002",
+  "level": "L2",
+  "skill_expected": "g66",
+  "query": "占用一台空闲设备并传送一个小配置文件过去",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "occupy_device",
+      "push_file"
+    ],
+    "threshold": 2
+  },
+  "note": "L2 简单动作组合：占用设备 + 传输一个文件（不启动游戏）（g66 模板变体 1/1）"
+}

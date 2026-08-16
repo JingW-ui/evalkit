@@ -651,6 +651,7 @@ def scan_airlab_log(path):
     # --- 工具调用序列 ---
     tool_dist = {}
     tool_seq = []
+    tool_times = []        # (HH:MM:SS, 工具名) —— 供耗时统计/事件流
     for ln in lines:
         m = re.search(r"\[CC 🔧 ([^\]]+)\] ?(.*)", ln)
         if m:
@@ -658,8 +659,40 @@ def scan_airlab_log(path):
             arg_text = m.group(2).strip()
             tool_dist[name] = tool_dist.get(name, 0) + 1
             tool_seq.append(_tool_with_param(name, arg_text))
+            tm = re.match(r"\[(\d\d:\d\d:\d\d)\]", ln)
+            if tm:
+                tool_times.append((tm.group(1), name))
 
     total_tool_calls = sum(tool_dist.values())
+
+    # --- 真实耗时（airlab 通道不依赖虚构事件流，直接按日志行时间提取） ---
+    def _hm_s(ts):
+        try:
+            h, mi, s = ts.split(":")
+            return int(h) * 3600 + int(mi) * 60 + int(s)
+        except (ValueError, AttributeError):
+            return None
+
+    # 模型活跃：thinking_tokens xN (over X.Xs) 累加（真实思考时长）
+    llm_ms = 0.0
+    for m in re.finditer(r"thinking_tokens x\d+ \(over ([\d.]+)s\)", txt):
+        try:
+            llm_ms += float(m.group(1)) * 1000
+        except (ValueError, TypeError):
+            pass
+    # 工具执行：工具调用行 → 下一个 UserMessage 行（结果返回点）的时间差累加
+    tool_ms = 0.0
+    user_ts_list = [(_hm_s(m.group(1)), i) for i, m in
+                    enumerate(re.finditer(r"\[(\d\d:\d\d:\d\d)\] \[step \d+\] UserMessage", txt))]
+    user_ts = [t for t, _ in user_ts_list]
+    for ts, name in tool_times:
+        t0 = _hm_s(ts)
+        if t0 is None:
+            continue
+        # 找该工具行之后最近的 UserMessage 行时间
+        t1 = next((u for u in user_ts if u is not None and u >= t0), None)
+        if t1 is not None and t1 > t0:
+            tool_ms += (t1 - t0) * 1000
 
     # --- 子任务解析（TaskCreate / TaskUpdate） ---
     # pod 文本日志里 TaskCreate 行无 taskId，TaskUpdate 行含 taskId "1"~"N"，
@@ -873,6 +906,10 @@ def scan_airlab_log(path):
         "model_usage": model_usage,
         "tool_dist": tool_dist,
         "tool_seq": tool_seq,
+        "tool_times": tool_times,
+        "llm_ms": round(llm_ms, 1),
+        "tool_ms": round(tool_ms, 1),
+        "human_wait_ms": 0.0,
         "total_tool_calls": total_tool_calls,
         "tokens": {
             "input": token_input, "cache_read": token_cache_read,
@@ -904,6 +941,64 @@ def scan_airlab_log(path):
 
 # ===== dsh 流式 JSONL 日志解析 =====
 
+# DSH 落盘压缩行的 type 标签（chunk-runs，见 dsh-session/chunk-rows.ts）：
+# 连续同块 delta chunk 事件合并为一条存储行，展开后是 assistant/chunk 事件。
+_CHUNK_ROW_TAGS = ("text-chunks", "reasoning-chunks", "tool-call-chunks")
+
+
+def _mk_chunk_event(seq0, time0, dt, k, data, chunk):
+    """按 DSH expandRow 规则重建第 k 个成员：seq = seq0+k，time = time0 + 前 k 个 gap 之和。"""
+    t = time0
+    for gap in dt[:k]:
+        t += gap
+    return {
+        "type": "assistant/chunk",
+        "seq": seq0 + k,
+        "time": t,
+        "data": {"turn": data.get("turn"), "step": data.get("step"), "chunk": chunk},
+    }
+
+
+def _expand_dsh_chunk_rows(lines):
+    """
+    把 DSH JSONL 里的 chunk-runs 压缩行（text-chunks/reasoning-chunks/tool-call-chunks）
+    解包回原始 assistant/chunk 事件，保证 seq 连续、token 级回放保真。
+
+    规则对齐 DSH `packages/core/session/src/chunk-rows.ts` 的 expandRow：
+      - text-chunks / reasoning-chunks → data.texts[k]，chunk 为 text-delta / reasoning-delta
+      - tool-call-chunks → data.args[k]，chunk 为 tool-call-delta（id/name 行级共享）
+      - dt 长度 = 成员数 - 1；成员 k 的 time = time0 + sum(dt[0..k-1])
+    其他行原样保留；展开后按 seq 稳定排序（防御性，正常日志本就连续有序）。
+    """
+    out = []
+    for o in lines:
+        tag = o.get("type")
+        if tag not in _CHUNK_ROW_TAGS:
+            out.append(o)
+            continue
+        data = o.get("data") or {}
+        seq0 = o.get("seq0")
+        time0 = o.get("time0")
+        dt = data.get("dt") or []
+        if tag == "tool-call-chunks":
+            payload = data.get("args") or []
+            cid = data.get("id", "")
+            name = data.get("name")
+            for k, arg in enumerate(payload):
+                chunk = {"type": "tool-call-delta", "index": data.get("index"), "id": cid, "argumentsDelta": arg}
+                if name is not None:
+                    chunk["name"] = name
+                out.append(_mk_chunk_event(seq0, time0, dt, k, data, chunk))
+        else:
+            payload = data.get("texts") or []
+            ctype = "text-delta" if tag == "text-chunks" else "reasoning-delta"
+            for k, text in enumerate(payload):
+                chunk = {"type": ctype, "index": data.get("index"), "text": text}
+                out.append(_mk_chunk_event(seq0, time0, dt, k, data, chunk))
+    out.sort(key=lambda e: e.get("seq", 0))
+    return out
+
+
 def scan_dsh_log(path):
     """
     解析 dsh 环境的流式会话日志，输出与 scan_single_session 同构的 dict。
@@ -913,8 +1008,9 @@ def scan_dsh_log(path):
       - 流式事件：assistant/chunk（含 usage）、text-chunks、tool-call-chunks 等
       - 真实消息：user/message、assistant/message（content 在 data.message.content 或 data.content）
       - 工具：tool/call（data.name/arguments）、tool/result（data.message.content[].isError）
-      - usage 字段是驼峰：inputTokens/outputTokens/cacheReadTokens/reasoningTokens
+      - usage 字段是驼峰：inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/reasoningTokens
       - skill 工具名是小写 `skill`（对应 Claude Code 的 `Skill`）
+      - 落盘时连续 delta chunk 会压缩为 chunk-runs 行，解析前先 _expand_dsh_chunk_rows 解包
     """
     path = Path(path)
     session_id = path.parent.name  # dsh-session-session-<uuid>
@@ -928,6 +1024,7 @@ def scan_dsh_log(path):
                 lines.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
+    lines = _expand_dsh_chunk_rows(lines)
 
     def _data(o):
         return o.get("data", {}) if isinstance(o.get("data"), dict) else {}
@@ -1009,20 +1106,36 @@ def scan_dsh_log(path):
             if m:
                 script_skills.add(m.group(1))
 
-    # --- usage（assistant/chunk 里累计，字段驼峰） ---
+    # --- usage（字段驼峰；优先 assistant/message.usage 每步最终值，chunk usage 块仅兜底） ---
+    # DSH 中 usage 有两种携带方式：
+    #   1) assistant/message.usage（TokenUsage：inputTokens/outputTokens/cacheReadTokens/
+    #      cacheWriteTokens?/reasoningTokens?）——组装消息时的最终账，优先采信；
+    #   2) 流式过程中的 assistant/chunk（chunk.type=='usage'）——仅在无 message.usage 时兜底，
+    #      避免同一步双计。
     tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
     model_usage = {}
+    usage_by_step = {}
     for o in lines:
-        if o.get("type") != "assistant/chunk":
-            continue
         d = _data(o)
-        chunk = d.get("chunk", {})
-        if chunk.get("type") == "usage":
-            u = chunk.get("usage", {})
-            tokens["input"] += u.get("inputTokens", 0)
-            tokens["cache_read"] += u.get("cacheReadTokens", 0)
-            tokens["output"] += u.get("outputTokens", 0)
-            # cache_write: dsh 无该字段，默认 0
+        t = o.get("type")
+        if t == "assistant/message":
+            msg = d.get("message", {})
+            u = msg.get("usage") if isinstance(msg, dict) else None
+            if isinstance(u, dict):
+                usage_by_step.setdefault((d.get("turn"), d.get("step")), u)
+    if not usage_by_step:
+        for o in lines:
+            d = _data(o)
+            if o.get("type") != "assistant/chunk":
+                continue
+            chunk = d.get("chunk", {})
+            if chunk.get("type") == "usage" and isinstance(chunk.get("usage"), dict):
+                usage_by_step.setdefault((d.get("turn"), d.get("step")), chunk["usage"])
+    for u in usage_by_step.values():
+        tokens["input"] += u.get("inputTokens", 0)
+        tokens["cache_read"] += u.get("cacheReadTokens", 0)
+        tokens["cache_write"] += u.get("cacheWriteTokens", 0)  # DSH 有该字段（可选，缺省 0）
+        tokens["output"] += u.get("outputTokens", 0)
 
     # 模型：dsh 日志可能在 assistant/message 或 session 里带模型名
     model_name = ""

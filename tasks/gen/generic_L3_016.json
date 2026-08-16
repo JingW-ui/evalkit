@@ -1,0 +1,12 @@
+{
+  "task_id": "generic_L3_016",
+  "level": "L3",
+  "skill_expected": "generic",
+  "query": "在 D:/tmp/evalkit-sandbox 下创建文件 cfg_smoke.txt，内容为 'evalkit task-gen smoke test'，然后读取回来确认",
+  "success_condition": {
+    "type": "file_exists",
+    "path": "cfg_smoke.txt",
+    "device": "local"
+  },
+  "note": "L3 多步流程：写文件 + 读回验证（generic 模板变体 1/1）"
+}

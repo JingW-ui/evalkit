@@ -1,0 +1,14 @@
+{
+  "task_id": "generic_L2_015",
+  "level": "L2",
+  "skill_expected": "generic",
+  "query": "读取 D:/tmp/evalkit-sandbox/README.md 并总结前 5 行内容",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "read"
+    ],
+    "threshold": 1
+  },
+  "note": "L2 动作组合：读文件 + 文本总结（generic 模板变体 1/1）"
+}

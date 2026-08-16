@@ -1,0 +1,14 @@
+{
+  "task_id": "airgattai_18421_L2_002",
+  "level": "L2",
+  "skill_expected": "airgattai",
+  "query": "在设备 GIH-D-18421 上安装应用包 /tmp/app.apk（覆盖安装）",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "install_app"
+    ],
+    "threshold": 1
+  },
+  "note": "L2 动作组合：占用设备 + 安装应用（airgattai 模板变体 1/1）"
+}

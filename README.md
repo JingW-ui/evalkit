@@ -11,7 +11,9 @@
 - Token 消耗多少？
 - 有几个人工介入、几轮对话、几个工具调用？
 
-当前支持**离线评测**（分析已落盘的会话日志）；**实时交互评测**在规划中，见 `ROADMAP.md` 第 10 节。
+当前支持**离线评测**（分析已落盘的会话日志）+ **DSH 实时评测后端**（`dsh_backend.py`，阶段 1）：
+基于 DeepSeek Harness 的事件流实时采集 `tool_result`/`turn/end reason`/TTFT 等离线拿不到的信号，
+实时折叠指标、运行中告警、事件流落盘。详见 `docs/dsh-integration-research.md`。
 
 被测对象与具体 Agent 实现解耦，两种形态：
 
@@ -29,12 +31,22 @@ evalkit/
 ├── replay.py            # 离线分析单条会话 → JSON + Markdown
 ├── run_eval.py          # 驱动 Agent 跑评测（正向）
 ├── run_replay_batch.py  # 批量离线分析多个会话
+├── dsh_backend.py       # DSH 实时评测后端（阶段 1，需 deepseek-harness SDK）
+├── claude_backend.py    # Claude Code 实时评测后端（通道 A：stream-json，零依赖）
+├── eval_server.py       # 实时评测看板服务（R3：React 前端 + 会话发现 + 挂接 + raw 浏览）
+├── session_discovery.py # 会话发现器（samples 目录 / 手动路径 / Claude projects / session_root）
+├── tail_attach.py       # 外部 Claude 会话 JSONL 实时尾随挂接
+├── sessions/            # 受限会话样例目录（10 个：claude ×4 / dsh ×3 / airlab ×3）
+├── webui/               # React 前端（Vite 构建 → dist/，由 eval_server 服务）
+├── web/evalboard.html   # 旧版原生单页看板（弃用中，可删除）
 ├── parser.py            # 会话日志解析 + 校验器注册表
 ├── report.py            # 聚合+报表
 ├── runner.py            # 子进程驱动 Agent 执行
 ├── conf.json            # 费率配置
 ├── tasks/               # 测试用例（L1-L4 分级 + skill_expected）
 ├── results/             # 输出（git 忽略）
+├── docs/                # 调研文档（dsh-integration-research.md / claude-backend-research.md）
+├── tests/               # 回归测试（scan_dsh_log / dsh_backend / claude_backend / eval_server）
 ├── sandbox/             # 运行沙盒（git 忽略）
 └── ROADMAP.md           # 后续开发计划
 ```

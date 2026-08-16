@@ -1,0 +1,15 @@
+{
+  "task_id": "uu_remote_18125_L2_002",
+  "level": "L2",
+  "skill_expected": "uu_remote",
+  "query": "在远程设备 GIH-D-18125 上检查 UU 远程客户端是否已安装并报告版本",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "GameViewer",
+      "卸载"
+    ],
+    "threshold": 1
+  },
+  "note": "L2 动作组合：连接设备 + 软件探测（uu_remote 模板变体 1/1）"
+}

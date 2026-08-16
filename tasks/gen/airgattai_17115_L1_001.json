@@ -1,0 +1,14 @@
+{
+  "task_id": "airgattai_17115_L1_001",
+  "level": "L1",
+  "skill_expected": "airgattai",
+  "query": "列出当前可用的空闲安卓设备",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "list_devices"
+    ],
+    "threshold": 1
+  },
+  "note": "L1 单一动作：设备列表查询（airgattai 模板变体 1/1）"
+}

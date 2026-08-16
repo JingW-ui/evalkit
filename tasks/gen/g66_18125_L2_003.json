@@ -1,0 +1,12 @@
+{
+  "task_id": "g66_18125_L2_003",
+  "level": "L2",
+  "skill_expected": "g66",
+  "query": "把本地文件 D:/tmp/evalkit-sandbox/cfg_smoke.txt 推送到设备 GIH-D-18125 的 /sdcard/ 下",
+  "success_condition": {
+    "type": "file_exists",
+    "path": "sdcard/cfg_smoke.txt",
+    "device": "GIH-D-18125"
+  },
+  "note": "L2 动作组合：占用 + 推送 + 校验远端文件存在（g66 模板变体 1/1）"
+}

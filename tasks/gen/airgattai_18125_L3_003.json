@@ -1,0 +1,15 @@
+{
+  "task_id": "airgattai_18125_L3_003",
+  "level": "L3",
+  "skill_expected": "airgattai",
+  "query": "在设备 GIH-D-18125 上启动应用 com.example.app，截屏确认运行正常",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "start_app",
+      "screenshot"
+    ],
+    "threshold": 2
+  },
+  "note": "L3 多步流程：启动应用 + 截图验证（airgattai 模板变体 1/1）"
+}

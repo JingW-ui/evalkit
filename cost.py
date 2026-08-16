@@ -80,6 +80,61 @@ def theoretical_cost(model: str, tokens: dict, pricing: dict = None) -> float:
     return (ti * unit["input"] + to * unit["output"] + cr * unit["cache_read"] + cw * unit["cache_write"]) / 1e6 * mult
 
 
+# ===== 挂牌价表直接估算（USD） =====
+
+def _anchor_usd(pricing: dict) -> dict:
+    """锚点模型（deepseek-v4-flash）的 USD 单价（¥→USD 折算，汇率近似 0.14）。"""
+    anchor = pricing.get("anchor_per_1m", {})
+    return {k: v * 0.14 for k, v in anchor.items()}
+
+
+def estimate_cost_usd(model: str, tokens: dict, pricing: dict = None) -> float | None:
+    """
+    按 models_usd 挂牌价表估算成本（USD），不再依赖 airlab 反推。
+
+    匹配顺序：精确 → 包含/前缀 → 平台档位（model_multipliers × anchor USD 价）。
+    tokens 键支持两种口径：input_tokens/output_tokens/cache_read_tokens/cache_write_tokens
+    （EventMetrics）或 input_tokens/cache_read_input_tokens/cache_creation_input_tokens（cost.py 惯例）。
+
+    Returns:
+        USD 金额；无法估算（模型未知且无倍率）返回 None。
+    """
+    if pricing is None:
+        pricing = load_pricing()
+    table = pricing.get("models_usd", {})
+    price = table.get(model)
+    if price is None:
+        for key, val in table.items():
+            if key.startswith("_"):
+                continue
+            if key in model or model in key:
+                price = val
+                break
+    if price is None:
+        mult = get_multiplier(model, pricing)
+        if mult is None:
+            return None
+        anchor = table.get(pricing.get("anchor_model", "")) or _anchor_usd(pricing)
+        am = pricing.get("anchor_multiplier", 0.1) or 0.1
+        price = {k: v * mult / am for k, v in anchor.items()}
+    ti = tokens.get("input_tokens", 0)
+    to = tokens.get("output_tokens", 0)
+    cr = tokens.get("cache_read_tokens", tokens.get("cache_read_input_tokens", 0))
+    cw = tokens.get("cache_write_tokens", tokens.get("cache_creation_input_tokens", 0))
+    return (ti * price.get("input", 0) + to * price.get("output", 0)
+            + cr * price.get("cache_read", 0) + cw * price.get("cache_write", 0)) / 1e6
+
+
+def estimate_cost_cny(model: str, tokens: dict, pricing: dict = None) -> float | None:
+    """按挂牌价表估算成本并换算人民币（cny_per_usd，缺省 7.2）。"""
+    usd = estimate_cost_usd(model, tokens, pricing)
+    if usd is None:
+        return None
+    if pricing is None:
+        pricing = load_pricing()
+    return usd * pricing.get("cny_per_usd", 7.2)
+
+
 # ===== 平台加价动态反推 =====
 
 # 会话级缓存：{model: [markup, ...]}。首条日志前从 conf.json 读入历史样本，

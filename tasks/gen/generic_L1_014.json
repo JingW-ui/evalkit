@@ -1,0 +1,15 @@
+{
+  "task_id": "generic_L1_014",
+  "level": "L1",
+  "skill_expected": "generic",
+  "query": "告诉我当前工作目录下有哪些 .md 文件",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "glob",
+      "read"
+    ],
+    "threshold": 1
+  },
+  "note": "L1 单一动作：文件查询（generic 模板变体 1/1）"
+}

@@ -1,7 +1,8 @@
 {
   "pricing": {
     "currency": "CNY",
-    "note": "锚点单价为 deepseek-v4-flash 官方挂牌价(¥/百万 tokens)，倍率为相对「效果(1x)」档。平台实际结算价从 airLab pod 日志的动态反推(platform_markup)校准，见 cost.py",
+    "cny_per_usd": 7.2,
+    "note": "成本估算策略：官方/真实成本优先（claude total_cost_usd、airlab cost 字段）；缺失时按 models_usd 挂牌价表直接估算（2026-04 调研，USD/百万 tokens）。展示统一换算 RMB（cny_per_usd）。平台档位名（deepseek-v4-flash 等）走 anchor×multiplier 推算，见 cost.py estimate_cost_usd",
     "anchor_per_1m": {
       "input": 1.0,
       "output": 2.0,
@@ -26,6 +27,123 @@
       "kimi-k3": 2.1,
       "kimi-k3[1m]": 2.1
     },
+    "models_usd": {
+      "_comment": "主流模型挂牌价（USD/百万 tokens），调研日期 2026-04；cache_read 常见 ≈10% input，cache_write 常见 ≈1.25x input",
+      "deepseek-v3.2": {
+        "input": 0.28,
+        "output": 0.42,
+        "cache_read": 0.028,
+        "cache_write": 0.56
+      },
+      "deepseek-r1": {
+        "input": 0.55,
+        "output": 2.19,
+        "cache_read": 0.055,
+        "cache_write": 1.1
+      },
+      "deepseek-v4-flash": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.003,
+        "cache_write": 0.18
+      },
+      "claude-sonnet-4.6": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      },
+      "claude-opus-4.6": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      },
+      "claude-haiku": {
+        "input": 0.8,
+        "output": 4.0,
+        "cache_read": 0.08,
+        "cache_write": 1.0
+      },
+      "gpt-5.4": {
+        "input": 2.5,
+        "output": 15.0,
+        "cache_read": 0.25,
+        "cache_write": 3.13
+      },
+      "gpt-5.4-mini": {
+        "input": 0.75,
+        "output": 4.5,
+        "cache_read": 0.075,
+        "cache_write": 0.94
+      },
+      "o3-mini": {
+        "input": 1.1,
+        "output": 4.4,
+        "cache_read": 0.11,
+        "cache_write": 1.38
+      },
+      "o4-mini": {
+        "input": 1.1,
+        "output": 4.4,
+        "cache_read": 0.11,
+        "cache_write": 1.38
+      },
+      "qwen3-max": {
+        "input": 2.4,
+        "output": 9.6,
+        "cache_read": 0.24,
+        "cache_write": 3.0
+      },
+      "qwen3.5-9b": {
+        "input": 0.05,
+        "output": 0.15,
+        "cache_read": 0.005,
+        "cache_write": 0.06
+      },
+      "glm-5": {
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "glm-4.6": {
+        "input": 1.0,
+        "output": 4.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      },
+      "kimi-k2": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.06,
+        "cache_write": 0.75
+      },
+      "gemini-2.5-flash": {
+        "input": 0.3,
+        "output": 2.5,
+        "cache_read": 0.03,
+        "cache_write": 0.38
+      },
+      "gemini-3.1-pro": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "grok-4": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      },
+      "llama-4-scout": {
+        "input": 0.08,
+        "output": 0.3,
+        "cache_read": 0.008,
+        "cache_write": 0.1
+      }
+    },
     "platform_markup": null,
     "markup_samples": {
       "deepseek-v4-pro": [
@@ -38,11 +156,45 @@
         5.3250826818957115,
         4.276652101735966,
         3.5904584945700333,
-        3.755713507124665
+        3.755713507124665,
+        3.6886353349949554,
+        4.538165476540153,
+        4.284263132712294,
+        3.580628126229165,
+        5.620820256230037,
+        6.730486173846159,
+        6.107004402685622,
+        5.167570345441048,
+        3.5751900835362123
+      ],
+      "deepseek-v4-flash": [
+        7.726269315673288,
+        6.600660066006601
       ]
     }
   },
   "default_model": "claude-sonnet-5",
   "default_n": 3,
-  "step_timeout_s": 300
+  "step_timeout_s": 300,
+  "session_aliases": {
+    "8c537184-09c2-41cc-a260-f28fba46fd83": "8c537184-09c2-41cc-a260-f28fba46fd83"
+  },
+  "session_hidden": [
+    "airlab_02_basic",
+    "claude_03_simple",
+    "新建 文本文档"
+  ],
+  "provider": {
+    "codemaker_deepseek": {
+      "_comment": "经 codemaker 本地代理接入 deepseek（与 ~/.claude/settings.json env 同构）",
+      "base_url": "http://127.0.0.1:15721",
+      "token": "codemaker-managed",
+      "model": "auto_deepseek_plan[1m]"
+    },
+    "default": {
+      "_comment": "默认=不注入 env/hooks，沿用 claude CLI 系统配置；如要强制走某 provider 可复制 codemaker_deepseek",
+      "env": {},
+      "hooks": {}
+    }
+  }
 }

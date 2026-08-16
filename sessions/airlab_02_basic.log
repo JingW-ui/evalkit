@@ -1,0 +1,4 @@
+[09:15:00] CCAgent.run skills=[] model=deepseek-v4-flash prompt='查询设备列表'
+[09:15:03] [CC 🔧 list_devices] {'platform': 'pc'}
+[09:15:10] ResultMessage ... usage={'input_tokens': 12000, 'output_tokens': 60, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0} cost=$0.08 turns=2 用时=0m10s
+[09:15:11] CCAgent.run done

@@ -1,0 +1,14 @@
+{
+  "task_id": "g66_17115_L1_001",
+  "level": "L1",
+  "skill_expected": "g66",
+  "query": "获取一下当前可用的 PC 设备列表",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "list_devices"
+    ],
+    "threshold": 1
+  },
+  "note": "L1 单一动作：仅查询设备列表（不占用、不操作）（g66 模板变体 1/1）"
+}
