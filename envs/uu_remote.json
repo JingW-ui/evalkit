@@ -1,0 +1,9 @@
+{
+  "skill": "uu_remote",
+  "cwd": "D:\\wy_projects\\work_4_log",
+  "device": "HZMTL·HIH-D-0322",
+  "backend": "claude",
+  "provider": null,
+  "model": null,
+  "note": "UU 远程客户端部署/取号，目标设备 HZMTL·HIH-D-0322（AirGattai 通道，cwd 含 .mcp.json）"
+}

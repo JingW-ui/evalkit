@@ -81,10 +81,10 @@ def _enrich_cost(metrics: dict) -> dict:
 def run_one_task(task: dict, backend: str = "claude", timeout_s: int = 300,
                  permission_mode: str = None, model: str = None,
                  session_root: str = None, cwd: str = None, cancel=None,
-                 provider: str = None) -> dict:
+                 provider: str = None, run_idx: int = 0) -> dict:
     """执行单个任务，返回 result（含 metrics/assistant_text/...）。"""
     query = task.get("query", "")
-    session_id = f"eval-{task.get('task_id', 'task')}-{int(time.time() * 1000)}"
+    session_id = f"eval-{task.get('task_id', 'task')}-r{run_idx}-{int(time.time() * 1000)}"
     if backend == "claude":
         from claude_backend import ClaudeEvalBackend
         with ClaudeEvalBackend(session_root=session_root, cwd=cwd,
@@ -111,75 +111,88 @@ def run_one_task(task: dict, backend: str = "claude", timeout_s: int = 300,
 def run_batch(tasks: list, backend: str = "claude", timeout_s: int = 300,
               permission_mode: str = None, model: str = None,
               session_root: str = None, cwd: str = None, dry_run: bool = False,
-              on_task=None, provider: str = None) -> dict:
-    """批量执行 + 判级 + 记录。on_task(task, result, verdict) 回调（进度展示）。"""
+              on_task=None, provider: str = None, repeat: int = 1) -> dict:
+    """批量执行 + 判级 + 记录。每任务串行跑 repeat 次（task.repeat 优先）。
+
+    on_task(task, result, verdict, run_idx) 回调（进度展示）。
+    """
     records = EvalRecords()
     results = []
     started_wall = time.time()
     for task in tasks:
+        n = int(task.get("repeat") or repeat or 1)
         if dry_run:
             print(f"[dry-run] {task.get('task_id')} L{task.get('level')} "
-                  f"{task.get('skill_expected')}: {task.get('query')}")
+                  f"{task.get('skill_expected')} ×{n}: {task.get('query')}")
             continue
-        print(f"\n=== {task.get('task_id')} L{task.get('level')} "
-              f"[{task.get('skill_expected')}] ===")
-        print(f"query: {task.get('query')}")
-        try:
-            result = run_one_task(task, backend=backend, timeout_s=timeout_s,
-                                  permission_mode=permission_mode, model=model,
-                                  session_root=session_root, cwd=cwd, provider=provider)
-        except Exception as exc:
-            print(f"执行失败: {type(exc).__name__}: {exc}")
-            results.append({"task": task, "result": None, "verdict": None, "error": str(exc)})
-            # 执行异常也留痕：记一条失败记录（成功判定 false，level 按任务级别）
-            sid = f"eval-{task.get('task_id', 'task')}-{int(time.time() * 1000)}"
+        for i in range(n):
+            print(f"\n=== {task.get('task_id')} L{task.get('level')} "
+                  f"[{task.get('skill_expected')}] 第 {i + 1}/{n} 次 ===")
+            print(f"query: {task.get('query')}")
+            try:
+                result = run_one_task(task, backend=backend, timeout_s=timeout_s,
+                                      permission_mode=permission_mode, model=model,
+                                      session_root=session_root, cwd=cwd, provider=provider,
+                                      run_idx=i)
+            except Exception as exc:
+                print(f"执行失败: {type(exc).__name__}: {exc}")
+                results.append({"task": task, "result": None, "verdict": None,
+                                "error": str(exc), "run_idx": i})
+                # 执行异常也留痕：记一条失败记录（成功判定 false，level 按任务级别）
+                sid = f"eval-{task.get('task_id', 'task')}-r{i}-{int(time.time() * 1000)}"
+                records.add({
+                    "session_id": sid,
+                    "run_idx": i,
+                    "task_id": task.get("task_id"),
+                    "skill_expected": task.get("skill_expected"),
+                    "agent": backend,
+                    "level": task.get("level", "L?"),
+                    "level_source": "task",
+                    "level_reason": f"执行失败: {type(exc).__name__}: {str(exc)[:120]}",
+                    "success": False,
+                    "success_by": "exec_error",
+                    "tool_calls_total": None,
+                    "input_tokens": None,
+                    "cost_cny": None,
+                    "human_interventions": None,
+                    "turn_end_reason": None,
+                    "query": (task.get("query") or "")[:200],
+                })
+                if on_task:
+                    on_task(task, None, None, i)
+                continue
+            metrics = _enrich_cost(result.get("metrics") or {})
+            query = result.get("query") or task.get("query", "")
+            sid = result.get("session_id", "")
+            verdict = judge_eval(query, sid, metrics, result.get("assistant_text", ""),
+                                 tasks=[task])
+            # 写入评测记录（与 eval_server._record_eval 同构）
             records.add({
                 "session_id": sid,
+                "run_idx": i,
+                "task_id": task.get("task_id"),
+                "skill_expected": task.get("skill_expected"),
                 "agent": backend,
-                "level": task.get("level", "L?"),
-                "level_source": "task",
-                "level_reason": f"执行失败: {type(exc).__name__}: {str(exc)[:120]}",
-                "success": False,
-                "success_by": "exec_error",
-                "tool_calls_total": None,
-                "input_tokens": None,
-                "cost_cny": None,
-                "human_interventions": None,
-                "turn_end_reason": None,
-                "query": (task.get("query") or "")[:200],
+                "level": verdict["level"],
+                "level_source": verdict["level_source"],
+                "level_reason": verdict["level_reason"],
+                "success": verdict["success"],
+                "success_by": verdict["success_by"],
+                "tool_calls_total": metrics.get("tool_calls_total"),
+                "input_tokens": metrics.get("input_tokens"),
+                "cost_cny": metrics.get("cost_cny") or metrics.get("cost_est_cny"),
+                "human_interventions": metrics.get("human_interventions"),
+                "turn_end_reason": metrics.get("turn_end_reason"),
+                "query": (query or "")[:200],
             })
+            results.append({"task": task, "result": result, "verdict": verdict, "run_idx": i})
+            mark = "PASS" if verdict["success"] else "FAIL"
+            print(f"  -> {mark} L{verdict['level']} ({verdict['level_source']}) "
+                  f"tools={metrics.get('tool_calls_total')} "
+                  f"end={metrics.get('turn_end_reason')} "
+                  f"cost_cny={metrics.get('cost_cny') or metrics.get('cost_est_cny')}")
             if on_task:
-                on_task(task, None, None)
-            continue
-        metrics = _enrich_cost(result.get("metrics") or {})
-        query = result.get("query") or task.get("query", "")
-        sid = result.get("session_id", "")
-        verdict = judge_eval(query, sid, metrics, result.get("assistant_text", ""),
-                             tasks=[task])
-        # 写入评测记录（与 eval_server._record_eval 同构）
-        records.add({
-            "session_id": sid,
-            "agent": backend,
-            "level": verdict["level"],
-            "level_source": verdict["level_source"],
-            "level_reason": verdict["level_reason"],
-            "success": verdict["success"],
-            "success_by": verdict["success_by"],
-            "tool_calls_total": metrics.get("tool_calls_total"),
-            "input_tokens": metrics.get("input_tokens"),
-            "cost_cny": metrics.get("cost_cny") or metrics.get("cost_est_cny"),
-            "human_interventions": metrics.get("human_interventions"),
-            "turn_end_reason": metrics.get("turn_end_reason"),
-            "query": (query or "")[:200],
-        })
-        results.append({"task": task, "result": result, "verdict": verdict})
-        mark = "PASS" if verdict["success"] else "FAIL"
-        print(f"  -> {mark} L{verdict['level']} ({verdict['level_source']}) "
-              f"tools={metrics.get('tool_calls_total')} "
-              f"end={metrics.get('turn_end_reason')} "
-              f"cost_cny={metrics.get('cost_cny') or metrics.get('cost_est_cny')}")
-        if on_task:
-            on_task(task, result, verdict)
+                on_task(task, result, verdict, i)
     elapsed = round(time.time() - started_wall, 1)
     return {"results": results, "elapsed_s": elapsed, "records": records}
 
@@ -215,6 +228,20 @@ def print_matrix(records: EvalRecords) -> None:
               f"{r.get('session_id', '')[:24]} {(r.get('query') or '')[:40]}")
 
 
+# ---------- 环境配置（envs/<skill>.json） ----------
+
+def load_env(skill: str) -> dict:
+    """加载 envs/<skill>.json 环境配置（cwd/device/provider/model/backend/note）。"""
+    p = Path(__file__).parent / "envs" / f"{skill}.json"
+    if not p.is_file():
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 # ---------- CLI ----------
 
 def main(argv=None) -> int:
@@ -246,6 +273,9 @@ def main(argv=None) -> int:
                             "以加载该项目的 .mcp.json airgattai 通道）")
     p_run.add_argument("--session-root", default="results/batch",
                        help="会话日志落盘根目录（看板「批量评测」tab 独立展示）")
+    p_run.add_argument("--skill", default=None,
+                       help="按 skill 加载 envs/<skill>.json 环境配置（cwd/device/provider/model）")
+    p_run.add_argument("--repeat", type=int, default=1, help="每任务重复次数（task.repeat 优先）")
     p_run.add_argument("--dry-run", action="store_true", help="只列出任务不执行")
 
     args = parser.parse_args(argv)
@@ -265,20 +295,31 @@ def main(argv=None) -> int:
         return 0
 
     if args.cmd == "run":
+        env = load_env(args.skill) if args.skill else {}
         domains = [d.strip() for d in args.domain.split(",") if d.strip()] if args.domain else None
         levels = [l.strip() for l in args.level.split(",") if l.strip()] if args.level else None
         tasks = load_tasks_from_dir(args.tasks_dir, domains, levels, args.limit)
         if not tasks:
             print(f"未找到任务（{args.tasks_dir}），先运行: python eval_batch.py gen", file=sys.stderr)
             return 1
-        print(f"加载 {len(tasks)} 个任务，backend={args.backend}，"
-              f"permission={args.permission_mode or 'default'}")
-        result = run_batch(tasks, backend=args.backend, timeout_s=args.timeout,
-                           permission_mode=args.permission_mode, model=args.model,
-                           session_root=args.session_root, cwd=args.cwd,
-                           dry_run=args.dry_run, provider=args.provider)
+        # env 配置：device 填充 query 占位符；cwd/provider/model 作为默认值（命令行优先）
+        device = env.get("device")
+        if device:
+            for t in tasks:
+                t["query"] = t.get("query", "").replace("{device}", device)
+        cwd = args.cwd or env.get("cwd")
+        provider = args.provider or env.get("provider")
+        model = args.model or env.get("model")
+        backend = args.backend
+        print(f"加载 {len(tasks)} 个任务，backend={backend}，repeat={args.repeat}，"
+              f"permission={args.permission_mode or 'default'}"
+              + (f"，env={args.skill}" if args.skill else ""))
+        result = run_batch(tasks, backend=backend, timeout_s=args.timeout,
+                           permission_mode=args.permission_mode, model=model,
+                           session_root=args.session_root, cwd=cwd,
+                           dry_run=args.dry_run, provider=provider, repeat=args.repeat)
         if not args.dry_run:
-            print(f"\n批量完成：{len(result['results'])} 任务，耗时 {result['elapsed_s']}s")
+            print(f"\n批量完成：{len(result['results'])} 次执行，耗时 {result['elapsed_s']}s")
             print_matrix(result["records"])
         return 0
     return 1
