@@ -37,8 +37,11 @@ codemaker_backend.py — 兼容对 Codemaker（OpenCode 系）会话数据的分
 
 import json
 import os
+import queue
 import sqlite3
+import subprocess
 import threading
+import time
 from pathlib import Path
 
 
@@ -729,3 +732,243 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# ---------- CLI headless 跑测（M2：codemaker run --format json） ----------
+
+class CodemakerCliAdapter:
+    """codemaker run --format json 逐行事件 → 统一事件（流式，step 按 messageID 分配）。
+
+    与 CodemakerEventAdapter（DB 快照/event 增量）互补：本类吃 CLI headless 的 stdout
+    JSON 行（顶层 type=step_start/tool_use/text/step_finish，part 字段与 DB part 同构）。
+    step_finish.tokens 是累计值——只在 reason=stop 的最终回合带 usage，避免重复累加。
+    """
+
+    def __init__(self):
+        self._turn = 0
+        self._msg_step = {}     # messageID -> step 号
+        self._msg_texts = {}    # messageID -> [(ptype, text)]（等 step-finish 发 assistant/message）
+
+    def adapt_line(self, line: str) -> list:
+        line = line.strip()
+        if not line:
+            return []
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return []
+        return self.adapt(obj)
+
+    def adapt(self, obj: dict) -> list:
+        t_ms = obj.get("timestamp")
+        part = obj.get("part") or {}
+        ptype = part.get("type")
+        mid = part.get("messageID") or ""
+        if mid not in self._msg_step:
+            self._msg_step[mid] = len(self._msg_step)
+        step = self._msg_step[mid]
+        if ptype == "step-start":
+            return [{"type": "step/start", "seq": -1, "time": t_ms,
+                     "data": {"step": step, "turn": self._turn}}]
+        if ptype == "tool":
+            return self._tool_events(part, t_ms, step)
+        if ptype in ("text", "reasoning"):
+            text = part.get("text", "")
+            if text:
+                self._msg_texts.setdefault(mid, []).append((ptype, text))
+            return []
+        if ptype == "step-finish":
+            return self._finish_events(part, t_ms, step, mid)
+        return []
+
+    def _tool_events(self, part: dict, t_ms, step: int) -> list:
+        call_id = part.get("callID") or ""
+        name = part.get("tool") or ""
+        state = part.get("state") or {}
+        is_err = str(state.get("status", "")) == "error"
+        return [
+            {"type": "tool/call", "seq": -1, "time": t_ms,
+             "data": {"turn": self._turn, "step": step, "callId": call_id, "name": name,
+                      "arguments": json.dumps(state.get("input") or {}, ensure_ascii=False)}},
+            {"type": "tool/result", "seq": -1, "time": t_ms,
+             "data": {"turn": self._turn, "step": step, "callId": call_id,
+                      "message": {"role": "user", "content": [{
+                          "type": "tool-result",
+                          "content": _tool_state_text(state),
+                          "isError": is_err}]}}},
+        ]
+
+    def _finish_events(self, part: dict, t_ms, step: int, mid: str) -> list:
+        reason = part.get("reason")
+        usage = _tokens_to_usage(part.get("tokens"))
+        evs = [{"type": "step/end", "seq": -1, "time": t_ms,
+                "data": {"step": step, "turn": self._turn}}]
+        texts = self._msg_texts.pop(mid, [])
+        content = [{"type": "reasoning" if ptype == "reasoning" else "text", "text": text}
+                   for ptype, text in texts if text]
+        if content:
+            evs.append({"type": "assistant/message", "seq": -1, "time": t_ms,
+                        "data": {"turn": self._turn, "step": step,
+                                 "message": {"model": "", "content": content,
+                                             "usage": usage if reason == "stop" else {},
+                                             "stop_reason": _finish_to_stop_reason(reason)}}})
+        if reason == "stop":
+            evs.append({"type": "turn/end", "seq": -1, "time": t_ms,
+                        "data": {"turn": self._turn, "reason": {"kind": "completed"}}})
+        return evs
+
+
+class CodemakerEvalBackend:
+    """codemaker CLI headless 评测后端（codemaker run --format json），与 ClaudeEvalBackend 同接口。"""
+
+    def __init__(self, bin_path: str = None, cwd: str = None, session_root: str = None,
+                 model: str = None, agent: str = None):
+        self.bin_path = bin_path or str(Path.home() / ".codemaker" / "bin" / "codemaker.exe")
+        self.cwd = cwd or str(Path.cwd())
+        self.session_root = Path(session_root) if session_root else None
+        self.model = model
+        self.agent = agent
+
+    def close(self) -> None:
+        """无长驻资源（每次 run_task 独立 subprocess），保留以对齐 ClaudeEvalBackend 接口。"""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def run_task(self, task: dict, session_id: str = None, timeout_s: int = 300,
+                 on_event=None, on_warning=None, cancel_event=None) -> dict:
+        """跑一个评测任务：codemaker run --format json --auto → 逐行解析 → 增量折叠指标。"""
+        from dsh_backend import EventMetrics
+        task_id = task.get("task_id", "unknown")
+        session_id = session_id or f"eval-{task_id}-{int(time.time() * 1000)}"
+        query = task.get("query", "")
+
+        metrics = EventMetrics()
+        adapter = CodemakerCliAdapter()
+        warnings_seen = set()
+        timeout_flag = {"hit": False}
+        cost_usd = 0.0
+
+        raw_path = log_path = None
+        raw_fp = log_fp = None
+        if self.session_root is not None:
+            sess_dir = self.session_root / session_id
+            sess_dir.mkdir(parents=True, exist_ok=True)
+            raw_path = sess_dir / "raw.jsonl"
+            log_path = sess_dir / "session.jsonl"
+            raw_fp = open(raw_path, "w", encoding="utf-8")
+            log_fp = open(log_path, "w", encoding="utf-8")
+            log_fp.write(json.dumps({
+                "type": "session", "version": 0, "id": session_id,
+                "createdAt": int(time.time() * 1000), "cwd": self.cwd,
+            }, ensure_ascii=False) + "\n")
+
+        def _emit(event: dict) -> None:
+            metrics.on_event(event)
+            if on_event is not None:
+                on_event(event)
+            if log_fp is not None:
+                log_fp.write(json.dumps(event, ensure_ascii=False) + "\n")
+                log_fp.flush()
+            for w in metrics.check_warnings():
+                if w not in warnings_seen:
+                    warnings_seen.add(w)
+                    if on_warning is not None:
+                        on_warning(w)
+
+        # 任务 query 作为第一条 user/message（CLI 不产 user 事件，需手动注入）
+        _emit({"type": "user/message", "seq": -1, "time": int(time.time() * 1000),
+               "data": {"content": [{"type": "text", "text": query}]}})
+
+        cmd = [self.bin_path, "run", "--format", "json", "--auto"]
+        if self.model:
+            cmd += ["--model", self.model]
+        if self.agent:
+            cmd += ["--agent", self.agent]
+        cmd += ["--dir", self.cwd, "--title", session_id, query]
+
+        q = queue.Queue()
+
+        def _drain(pipe, tag):
+            try:
+                for line in iter(pipe.readline, ""):
+                    q.put((tag, line))
+            finally:
+                pipe.close()
+
+        started_wall = time.monotonic()
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, cwd=self.cwd, text=True, encoding="utf-8",
+                errors="replace", bufsize=1,
+            )
+            t_out = threading.Thread(target=_drain, args=(proc.stdout, "out"), daemon=True)
+            t_err = threading.Thread(target=_drain, args=(proc.stderr, "err"), daemon=True)
+            t_out.start()
+            t_err.start()
+            deadline = time.time() + timeout_s
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.kill()
+                    timeout_flag["hit"] = True
+                    break
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    proc.kill()
+                    timeout_flag["hit"] = True
+                    break
+                try:
+                    tag, line = q.get(timeout=min(max(remaining, 0.01), 0.5))
+                except queue.Empty:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                if tag == "err":
+                    continue
+                if not line:
+                    continue
+                if raw_fp is not None:
+                    raw_fp.write(line)
+                    raw_fp.flush()
+                # 累计官方成本（step_finish.cost 是增量）
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    obj = None
+                if isinstance(obj, dict):
+                    part = obj.get("part") or {}
+                    if part.get("type") == "step-finish" and isinstance(part.get("cost"), (int, float)):
+                        cost_usd += part["cost"]
+                for event in adapter.adapt_line(line):
+                    _emit(event)
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+            if raw_fp is not None:
+                raw_fp.close()
+            if log_fp is not None:
+                log_fp.close()
+
+        metrics.finalize()
+        duration_s = round(time.monotonic() - started_wall, 2)
+        snapshot = metrics.snapshot()
+        snapshot["cost_usd"] = cost_usd or None
+        snapshot["model"] = snapshot.get("model") or self.model
+        return {
+            "session_id": session_id,
+            "task_id": task_id,
+            "query": query,
+            "metrics": snapshot,
+            "assistant_text": metrics.assistant_text(),
+            "finish_reason": metrics.turn_end_reason,
+            "duration_s": duration_s,
+            "timeout": timeout_flag["hit"],
+            "log_path": str(log_path) if log_path else None,
+            "raw_path": str(raw_path) if raw_path else None,
+            "warnings": sorted(warnings_seen),
+        }

@@ -98,7 +98,12 @@ def run_one_task(task: dict, backend: str = "claude", timeout_s: int = 300,
                             session_root=session_root) as b:
             return b.run_task(task, session_id=session_id, timeout_s=timeout_s,
                               cancel_event=cancel)
-    raise ValueError(f"未知 backend: {backend}（支持 claude/dsh）")
+    if backend == "codemaker":
+        from codemaker_backend import CodemakerEvalBackend
+        with CodemakerEvalBackend(cwd=cwd, session_root=session_root, model=model) as b:
+            return b.run_task(task, session_id=session_id, timeout_s=timeout_s,
+                              cancel_event=cancel)
+    raise ValueError(f"未知 backend: {backend}（支持 claude/dsh/codemaker）")
 
 
 # ---------- 批量执行 ----------
@@ -229,7 +234,7 @@ def main(argv=None) -> int:
     p_run.add_argument("--domain", default=None, help="过滤域（逗号分隔）")
     p_run.add_argument("--level", default=None, help="过滤级别（逗号分隔）")
     p_run.add_argument("--limit", type=int, default=0, help="任务数上限（0=全部）")
-    p_run.add_argument("--backend", default="claude", choices=["claude", "dsh"])
+    p_run.add_argument("--backend", default="claude", choices=["claude", "dsh", "codemaker"])
     p_run.add_argument("--timeout", type=int, default=300, help="每任务超时秒数")
     p_run.add_argument("--permission-mode", default=None,
                        help="claude 权限模式（如 bypassPermissions/acceptEdits）")
