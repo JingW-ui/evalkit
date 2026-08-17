@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory() as td:
 
 # ---- 矩阵输出不抛错 ----
 with tempfile.TemporaryDirectory() as td2:
-    rec = EvalRecords(path=Path(td2) / "rec.json")
+    rec = EvalRecords(path=Path(td2) / "rec.db")
     rec.add({"session_id": "s1", "agent": "claude", "level": "L1", "level_source": "task",
              "level_reason": "", "success": True, "success_by": "anchor",
              "tool_calls_total": 1, "input_tokens": 100, "cost_cny": 0.1,
@@ -96,6 +96,7 @@ with tempfile.TemporaryDirectory() as td2:
     except Exception as e:
         sys.stdout = old
         check("print_matrix 不抛错", False, f"{type(e).__name__}: {e}")
+    rec.close()
 
 print()
 if FAILS:

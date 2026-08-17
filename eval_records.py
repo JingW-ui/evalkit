@@ -163,73 +163,39 @@ def judge_eval(query: str, session_id: str, metrics: dict, assistant_text: str =
 # ---------- 评测记录存储 ----------
 
 class EvalRecords:
-    """评测记录：内存 + 落盘 results/eval_records.json。"""
+    """评测记录：SQLite 存储（results/eval_records.db），替代原 JSON 文件。
+
+    接口不变（add/all/matrix），存储层换成 SQLite（WAL 模式，eval_store.EvalStore），
+    解决原 JSON 多进程读写竞态（写前重读 + 读前重载只是缓解，非原子）。
+    """
 
     def __init__(self, path: str | Path = None):
-        self.path = Path(path) if path else Path(__file__).parent / "results" / "eval_records.json"
-        self._records: list = []
-        self._load()
-
-    def _load(self) -> None:
-        try:
-            if self.path.is_file():
-                with open(self.path, "r", encoding="utf-8") as f:
-                    self._records = json.load(f)
-        except Exception:
-            self._records = []
+        from eval_store import EvalStore
+        self.path = Path(path) if path else Path(__file__).parent / "results" / "eval_records.db"
+        self._store = EvalStore(self.path)
 
     def save(self) -> None:
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self._records, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        """兼容旧接口：SQLite 每次 upsert 已即时落盘，此方法为空操作。"""
 
     def add(self, record: dict) -> None:
+        """写入/覆盖一条记录（同 session_id 覆盖），即时落盘。"""
         record["_at"] = int(time.time() * 1000)
-        # 多进程共享文件（eval_server + eval_batch 同时写）：写前重新加载，
-        # 避免各自内存中的完整列表互相覆盖、复活对方已删除的旧记录。
-        self._load()
-        # 同 session 覆盖旧记录
-        self._records = [r for r in self._records if r.get("session_id") != record.get("session_id")]
-        self._records.append(record)
-        self.save()
+        self._store.upsert(record)
 
     def all(self, reload: bool = True) -> list:
-        """全部记录；reload=True 时先重读文件（多进程共享，eval_batch 写入立即可见）。"""
-        if reload:
-            self._load()
-        return list(self._records)
+        """全部记录（最新在前）。reload 参数保留以兼容旧接口，SQLite 每次实时查询。"""
+        return self._store.all()
 
     def matrix(self) -> dict:
-        """能力画像（agent×L1-L4 SR + 平均指标）+ 明细列表。读取前重载文件。"""
-        self._load()
-        recs = self._records
-        # 画像
-        cells = {}
-        for r in recs:
-            key = (r.get("agent"), r.get("level"))
-            c = cells.setdefault(key, {"count": 0, "success": 0,
-                                       "tool_calls": 0, "input_tokens": 0, "cost_cny": 0.0,
-                                       "human_interventions": 0, "end_reasons": {}})
-            c["count"] += 1
-            c["success"] += 1 if r.get("success") else 0
-            c["tool_calls"] += r.get("tool_calls_total") or 0
-            c["input_tokens"] += r.get("input_tokens") or 0
-            c["cost_cny"] += r.get("cost_cny") or 0
-            c["human_interventions"] += r.get("human_interventions") or 0
-            end = r.get("turn_end_reason")
-            c["end_reasons"][end] = c["end_reasons"].get(end, 0) + 1
-        portrait = []
-        for (agent, level), c in sorted(cells.items()):
-            portrait.append({
-                "agent": agent, "level": level, "count": c["count"],
-                "success": c["success"],
-                "sr": round(c["success"] / c["count"], 3) if c["count"] else None,
-                "avg_tools": round(c["tool_calls"] / c["count"], 1) if c["count"] else 0,
-                "avg_tokens_in": round(c["input_tokens"] / c["count"]) if c["count"] else 0,
-                "avg_cost_cny": round(c["cost_cny"] / c["count"], 4) if c["count"] else 0,
-                "avg_interventions": round(c["human_interventions"] / c["count"], 2) if c["count"] else 0,
-            })
-        return {"portrait": portrait, "records": list(reversed(recs))}
+        """能力画像（agent×L1-L4 SR + 平均指标）+ 明细列表。"""
+        return self._store.matrix()
+
+    def close(self) -> None:
+        """关闭底层 SQLite 连接（释放文件句柄，便于临时目录/服务退出清理）。"""
+        self._store.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
