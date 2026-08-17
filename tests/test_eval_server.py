@@ -238,6 +238,23 @@ check("airlab 耗时自洽（llm+tool+wait+idle=duration）",
       and metrics["llm_ms"] + metrics["tool_ms"] + metrics["human_wait_ms"] <= metrics["duration_ms"],
       f"实际 {metrics['duration_ms']} / {metrics['llm_ms']}+{metrics['tool_ms']}+{metrics['human_wait_ms']}")
 
+# ---- 3.5) launch_terminal：codemaker 分支（mock Popen 捕获命令，不真弹窗） ----
+from unittest.mock import patch
+
+with patch("subprocess.Popen") as mp:
+    mp.return_value.pid = 12345
+    r = server.launch_terminal({
+        "agent": "codemaker", "cwd": "D:\\wy_projects\\work_4_log",
+        "model": "netease-codemaker/deepseek-v4-flash",
+    })
+    check("codemaker 终端返回 ok", r.get("ok") is True, f"实际 {r}")
+    check("codemaker 终端 agent 标注", r.get("agent") == "codemaker")
+    check("codemaker 命令含 run -i --model",
+          mp.call_args.args[0][-6:] == ["run", "-i", "--model", "netease-codemaker/deepseek-v4-flash",
+                                        "--dir", "D:\\wy_projects\\work_4_log"],
+          f"实际 {mp.call_args.args[0]}")
+server._terminals.pop(12345, None)
+
 # ---- 4) 收尾 ----
 print("OK: eval_server 测试完成")
 

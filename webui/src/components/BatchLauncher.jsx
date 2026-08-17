@@ -15,6 +15,8 @@ const ROOTS = [
 export default function BatchLauncher({ onStarted, current }) {
   const [providers, setProviders] = useState([])
   const [provider, setProvider] = useState('default')
+  const [agent, setAgent] = useState('claude')
+  const [model, setModel] = useState('netease-codemaker/deepseek-v4-pro')
   const [cwd, setCwd] = useState('D:\\wy_projects\\work_4_log')
   const [fs, setFs] = useState(null); const [fsErr, setFsErr] = useState('')
   const [pickOpen, setPickOpen] = useState(false)
@@ -51,10 +53,15 @@ export default function BatchLauncher({ onStarted, current }) {
   async function pickDir() {
     setPickOpen(false)
     setBusy(true); setErr(''); setInfo('')
-    const j = await launchTerminal({ cwd, provider: provider === 'default' ? undefined : provider })
+    const j = await launchTerminal({
+      cwd,
+      agent,
+      model: agent === 'codemaker' ? (model || undefined) : undefined,
+      provider: agent === 'claude' && provider !== 'default' ? provider : undefined,
+    })
     setBusy(false)
     if (!j.ok) { setErr(j.error || '启动失败'); return }
-    setInfo(`已在「${j.cwd}」打开 claude 对话终端（pid ${j.pid}）· ${j.provider}`)
+    setInfo(`已在「${j.cwd}」打开 ${agent} 对话终端（pid ${j.pid}）· ${j.provider}`)
     refreshTerminals()
     if (onStarted) onStarted(j)
   }
@@ -67,7 +74,7 @@ export default function BatchLauncher({ onStarted, current }) {
 
   return (
     <div className="launcher panel">
-      <h2>拉起 agent 会话窗口（claude 对话终端 · 按模型提供商）</h2>
+      <h2>拉起 agent 会话窗口（claude / codemaker 对话终端）</h2>
       <div className="launcher-row">
         <label>会话目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
@@ -109,25 +116,43 @@ export default function BatchLauncher({ onStarted, current }) {
         </div>
       )}
       <div className="launcher-row">
-        <label>Provider</label>
-        <select value={provider} onChange={e => setProvider(e.target.value)}>
-          {providers.map(p => (
-            <option key={p.name} value={p.name}>
-              {p.name}{p.env?.ANTHROPIC_MODEL ? ` · ${p.env.ANTHROPIC_MODEL}` : ''}
-            </option>
+        <label>Agent</label>
+        <div className="agent-toggle">
+          {['claude', 'codemaker'].map(a => (
+            <button key={a} className={`ghost ${agent === a ? 'active' : ''}`}
+                    onClick={() => setAgent(a)}>{a}</button>
           ))}
-        </select>
-        <span className="launcher-preview mono" title={`env 覆盖\n${envPreview}`}>
-          {sel?.env?.ANTHROPIC_BASE_URL || '(继承系统配置)'}
-          {hooksPreview ? ` · hooks: ${hooksPreview}` : ''}
-        </span>
+        </div>
       </div>
-      {envPreview && <div className="launcher-env mono">{esc(envPreview)}</div>}
+      {agent === 'codemaker' ? (
+        <div className="launcher-row">
+          <label>模型</label>
+          <input value={model} onChange={e => setModel(e.target.value)} spellCheck={false}
+                 placeholder="netease-codemaker/deepseek-v4-pro" />
+          <span className="launcher-preview mono">provider/model，如 netease-codemaker/deepseek-v4-flash</span>
+        </div>
+      ) : (
+        <div className="launcher-row">
+          <label>Provider</label>
+          <select value={provider} onChange={e => setProvider(e.target.value)}>
+            {providers.map(p => (
+              <option key={p.name} value={p.name}>
+                {p.name}{p.env?.ANTHROPIC_MODEL ? ` · ${p.env.ANTHROPIC_MODEL}` : ''}
+              </option>
+            ))}
+          </select>
+          <span className="launcher-preview mono" title={`env 覆盖\n${envPreview}`}>
+            {sel?.env?.ANTHROPIC_BASE_URL || '(继承系统配置)'}
+            {hooksPreview ? ` · hooks: ${hooksPreview}` : ''}
+          </span>
+        </div>
+      )}
+      {agent === 'claude' && envPreview && <div className="launcher-env mono">{esc(envPreview)}</div>}
       {err && <div className="warn">{err}</div>}
       {info && <div className="info">{info}</div>}
       <div className="launcher-actions">
         <button className="primary" onClick={pickDir} disabled={busy}>
-          {busy ? '打开中…' : '打开 claude 终端'}
+          {busy ? '打开中…' : `打开 ${agent} 终端`}
         </button>
         <span className="muted" style={{ fontSize: 10 }}>
           不填 query：打开的是 agent 本身的交互式对话窗口（新控制台），在窗口里直接对话；日志自动接入评测
@@ -142,7 +167,7 @@ export default function BatchLauncher({ onStarted, current }) {
               <span className="mono" style={{ color: 'var(--green)' }}>●</span>
               <span className="mono" style={{ fontSize: 11 }}>pid {t.pid}</span>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink2)', flex: 1 }}>{t.cwd}</span>
-              <span className="muted" style={{ fontSize: 10 }}>{t.provider || 'default'} · {fmtT(t.started_at)}</span>
+              <span className="muted" style={{ fontSize: 10 }}>{t.agent || 'claude'} · {t.provider || 'default'} · {fmtT(t.started_at)}</span>
               <button className="ghost" onClick={() => stop(t.pid)} title="结束终端">✕</button>
             </div>
           ))}

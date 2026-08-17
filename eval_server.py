@@ -849,6 +849,9 @@ class EvalServer:
         cwd_path = Path(cwd)
         if not cwd_path.is_dir():
             return {"ok": False, "error": f"目录不存在: {cwd}"}
+        agent = params.get("agent") or "claude"
+        if agent == "codemaker":
+            return self._launch_codemaker_terminal(cwd_path, params.get("model"))
         provider = params.get("provider")
         # 解析 provider → env 覆盖 + settings 文件
         env = os.environ.copy()
@@ -890,6 +893,7 @@ class EvalServer:
             self._terminals[proc.pid] = {
                 "pid": proc.pid,
                 "cwd": str(cwd_path),
+                "agent": "claude",
                 "provider": provider,
                 "settings": tmp_path,
                 "started_at": int(time.time() * 1000),
@@ -897,6 +901,29 @@ class EvalServer:
         return {"ok": True, "pid": proc.pid, "cwd": str(cwd_path),
                 "provider": provider or "default",
                 "note": "已在新窗口打开 claude 对话终端；会话日志将自动出现在会话列表"}
+
+    def _launch_codemaker_terminal(self, cwd: Path, model: str | None) -> dict:
+        """在指定目录打开交互式 codemaker 对话终端（新控制台窗口）。"""
+        import subprocess
+        bin_path = str(Path.home() / ".codemaker" / "bin" / "codemaker.exe")
+        cmd = [bin_path, "run", "-i"]
+        if model:
+            cmd += ["--model", model]
+        cmd += ["--dir", str(cwd)]
+        try:
+            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+            proc = subprocess.Popen(cmd, cwd=str(cwd), creationflags=flags, close_fds=True)
+        except Exception as exc:
+            return {"ok": False, "error": f"启动 codemaker 失败: {exc}"}
+        with self._lock:
+            self._terminals[proc.pid] = {
+                "pid": proc.pid, "cwd": str(cwd), "agent": "codemaker",
+                "provider": model or "default", "settings": None,
+                "started_at": int(time.time() * 1000),
+            }
+        return {"ok": True, "pid": proc.pid, "cwd": str(cwd), "agent": "codemaker",
+                "provider": model or "default",
+                "note": "已在新窗口打开 codemaker 对话终端；会话将写入 opencode.db 并自动出现在会话列表"}
 
     def stop_terminal(self, pid: int) -> dict:
         """结束指定终端进程（并清理临时 settings 文件）。"""

@@ -106,6 +106,10 @@ button.ghost.active { color: var(--blue); border-color: var(--blue); }
 .mode { border: 0; background: transparent; color: var(--ink2); padding: 3px 12px; font-size: 12px; }
 .mode:hover { color: var(--ink); }
 .mode.active { background: var(--card); color: var(--ink); }
+.agent-toggle { display: flex; gap: 2px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.agent-toggle button { border: 0; background: transparent; color: var(--ink2); padding: 3px 12px; font-size: 12px; }
+.agent-toggle button:hover { color: var(--ink); }
+.agent-toggle button.active { background: var(--card); color: var(--ink); }
 .emptyview { color: var(--ink3); text-align: center; padding: 80px 0; font-size: 13px; }
 
 /* 批量评测发起面板（按 provider 拉起 agent 会话） */
