@@ -707,13 +707,13 @@ class EvalServer:
     def _replay_airlab(self, session_id: str, path) -> None:
         """airlab 文本日志：scan_airlab_log 解析 → 统一事件流广播 + 一次性指标。"""
         hub = self.hub
-        from session_report import scan_airlab_log
-        data = scan_airlab_log(str(path))
-        events = airlab_to_events(data, str(path))
-        hub.publish({"type": "run/start", "session_id": session_id,
-                     "backend": "airlab", "task_id": session_id, "query": "",
-                     "replay": True, "total_events": len(events)})
         try:
+            from session_report import scan_airlab_log
+            data = scan_airlab_log(str(path))
+            events = airlab_to_events(data, str(path))
+            hub.publish({"type": "run/start", "session_id": session_id,
+                         "backend": "airlab", "task_id": session_id, "query": "",
+                         "replay": True, "total_events": len(events)})
             # 批量广播（轨迹/任务 tab 消费，与 claude/dsh 通道同构）
             metrics = EventMetrics()
             chunk = []
@@ -748,13 +748,13 @@ class EvalServer:
     def _replay_codemaker(self, session_id: str, db_path) -> None:
         """Codemaker 会话库重放：DB 快照 → 统一事件批量广播 → 一次性指标。"""
         hub = self.hub
-        db = CodemakerDB(db_path)
-        sess = db.get_session(session_id)
-        hub.publish({"type": "run/start", "session_id": session_id,
-                     "backend": "codemaker", "task_id": session_id,
-                     "query": (sess or {}).get("title") or "",
-                     "replay": True, "total_events": 0})
         try:
+            db = CodemakerDB(db_path)
+            sess = db.get_session(session_id)
+            hub.publish({"type": "run/start", "session_id": session_id,
+                         "backend": "codemaker", "task_id": session_id,
+                         "query": (sess or {}).get("title") or "",
+                         "replay": True, "total_events": 0})
             adapter = CodemakerEventAdapter()
             metrics = EventMetrics()
             events = adapter.replay(db, session_id)

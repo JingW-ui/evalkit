@@ -35,17 +35,9 @@ def aggregate(records: List[Dict]) -> Dict:
         return {"error": "no records"}
 
     # --- 正例 vs 负例分组 ---
-    pos = [r for r in records if not r.get("false_trigger") is False] if any(r.get("triggered_when_should") is not None for r in records) else [r for r in records if r.get("skill_expected")]
-    neg = [r for r in records if r.get("skill_expected") is None or r.get("skill_expected") == ""]
-
-    # 更精确的分组：按 is_negative flag
-    # records 里没存 is_negative，但 false_trigger 不为 None 说明有负例判定
-    neg = [r for r in records if r.get("false_trigger") is not None]
-    pos = [r for r in records if r.get("triggered_when_should") is not None and not r.get("false_trigger", False)]
-    # 如果上面分不出来，回退到按 skill_expected 分
-    if not pos and not neg:
-        pos = [r for r in records if r.get("skill_expected")]
-        neg = [r for r in records if not r.get("skill_expected")]
+    # compute_metrics 口径：正例 triggered_when_should=bool（非 None），负例=None。
+    pos = [r for r in records if r.get("triggered_when_should") is not None]
+    neg = [r for r in records if r.get("triggered_when_should") is None]
 
     # === 8 指标 ===
 

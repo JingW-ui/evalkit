@@ -263,7 +263,7 @@ class ClaudeEventAdapter:
             return [{
                 "type": "assistant/chunk",
                 "seq": -1, "time": t_ms,
-                "data": {"turn": self._turn, "step": self._step, "chunk": chunk},
+                "data": {"turn": self._turn, "step": max(0, self._step - 1), "chunk": chunk},
             }]
         return []
 
@@ -348,7 +348,7 @@ class ClaudeEvalBackend:
         warnings_seen = set()
         result_info = {"cost_usd": None, "ttft_ms": None, "duration_ms": None,
                        "num_turns": None, "stop_reason": None, "permission_denials": None,
-                       "is_error": None}
+                       "is_error": None, "usage": None}
         timeout_flag = {"hit": False}
 
         # 落盘双格式
@@ -426,7 +426,23 @@ class ClaudeEvalBackend:
                 errors="replace", bufsize=1,
                 env=proc_env,
             )
-            # 逐行实时处理（死循环 + deadline）
+            # 后台线程读 stdout/stderr：避免 readline 阻塞导致 deadline/cancel 失效，
+            # 同时排空 stderr 防止管道缓冲写满反向卡死 claude 进程。
+            q = queue.Queue()
+
+            def _drain(pipe, tag):
+                try:
+                    for line in iter(pipe.readline, ""):
+                        q.put((tag, line))
+                finally:
+                    pipe.close()
+
+            t_out = threading.Thread(target=_drain, args=(proc.stdout, "out"), daemon=True)
+            t_err = threading.Thread(target=_drain, args=(proc.stderr, "err"), daemon=True)
+            t_out.start()
+            t_err.start()
+
+            # 逐行实时处理（主循环带 deadline，不阻塞在 readline）
             deadline = time.time() + timeout_s
             while True:
                 if cancel_event is not None and cancel_event.is_set():
@@ -438,11 +454,15 @@ class ClaudeEvalBackend:
                     proc.kill()
                     timeout_flag["hit"] = True
                     break
-                line = proc.stdout.readline()
-                if line == "" and proc.poll() is not None:
-                    break
+                try:
+                    tag, line = q.get(timeout=min(max(remaining, 0.01), 0.5))
+                except queue.Empty:
+                    if proc.poll() is not None:
+                        break  # 进程已退出且队列已排空
+                    continue
+                if tag == "err":
+                    continue  # stderr 只排空，不参与指标
                 if not line:
-                    time.sleep(0.01)
                     continue
                 if raw_fp is not None:
                     raw_fp.write(line)
@@ -463,6 +483,7 @@ class ClaudeEvalBackend:
                         "stop_reason": obj.get("stop_reason"),
                         "permission_denials": obj.get("permission_denials"),
                         "is_error": obj.get("is_error"),
+                        "usage": _normalize_usage(obj.get("usage") or {}),
                     })
         finally:
             if proc is not None and proc.poll() is None:
@@ -488,6 +509,13 @@ class ClaudeEvalBackend:
         snapshot["stop_reason"] = result_info["stop_reason"]
         snapshot["permission_denials"] = result_info["permission_denials"]
         snapshot["is_error"] = result_info["is_error"]
+        # 官方 usage 覆盖自算值（partial 消息带累计 usage 时 EventMetrics 会重复累加，result 行是全量权威值）
+        off_usage = result_info.get("usage")
+        if isinstance(off_usage, dict):
+            snapshot["input_tokens"] = off_usage.get("inputTokens", snapshot["input_tokens"])
+            snapshot["cache_read_tokens"] = off_usage.get("cacheReadTokens", snapshot["cache_read_tokens"])
+            snapshot["cache_write_tokens"] = off_usage.get("cacheWriteTokens", snapshot["cache_write_tokens"])
+            snapshot["output_tokens"] = off_usage.get("outputTokens", snapshot["output_tokens"])
 
         return {
             "session_id": session_id,

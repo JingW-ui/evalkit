@@ -171,6 +171,7 @@ class EventMetrics:
             kind = reason.get("kind") if isinstance(reason, dict) else None
             self.turn_end_reason = kind
             self.turn_end_reasons.append(kind)
+            self.turns += 1
         elif etype == "step/start":
             self.steps += 1
             self._has_step_events = True
