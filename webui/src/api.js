@@ -187,6 +187,11 @@ export async function getBatchStatus() {
   return r.json()
 }
 
+export async function getEnv(skill) {
+  const r = await fetch(`${BASE}/api/env?skill=${encodeURIComponent(skill || '')}`)
+  return r.json()
+}
+
 export function connectSSE(onFrame, onStatus) {
   const es = new EventSource(`${BASE}/events`)
   es.onopen = () => onStatus && onStatus('connected')

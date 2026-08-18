@@ -906,6 +906,19 @@ class EvalServer:
         except Exception as exc:
             return {"ok": False, "error": f"DK 拉取失败: {exc}"}
 
+    def get_env(self, params: dict) -> dict:
+        """返回 envs/<skill>.json 配置（cwd/device/note，不含敏感 token）。"""
+        skill = params.get("skill") or ""
+        if not skill:
+            return {"ok": False, "error": "缺少 skill"}
+        try:
+            from eval_batch import load_env
+            env = load_env(skill)
+        except Exception:
+            env = {}
+        return {"ok": True, "skill": skill, "cwd": env.get("cwd"),
+                "device": env.get("device"), "note": env.get("note")}
+
     def start_batch(self, params: dict) -> dict:
         """发起批量评测：后台线程跑 run_batch，SSE 发布 batch-progress。"""
         agent = params.get("agent") or "claude"
@@ -1248,6 +1261,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"executions": recs})
         elif self.path == "/api/tasks":
             self._send_json(self.server.eval.list_tasks())
+        elif self.path.startswith("/api/env"):
+            import urllib.parse
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            self._send_json(self.server.eval.get_env({"skill": qs.get("skill", [""])[0]}))
         elif self.path == "/api/batch/status":
             self._send_json(self.server.eval.batch_status())
         elif self.path == "/api/providers":

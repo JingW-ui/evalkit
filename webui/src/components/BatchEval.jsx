@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices } from '../api.js'
+import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const SKILLS = ['uu_remote', 'g66', 'airgattai', 'generic']
@@ -23,6 +23,7 @@ export default function BatchEval() {
   const [repeat, setRepeat] = useState(2)
   const [perm, setPerm] = useState('bypassPermissions')
   const [batchState, setBatchState] = useState({})
+  const [cwd, setCwd] = useState('')
   const [editing, setEditing] = useState(null)
   const [genDomain, setGenDomain] = useState('uu_remote')
   const [dkToken, setDkToken] = useState('')
@@ -33,12 +34,16 @@ export default function BatchEval() {
 
   useEffect(() => { refresh(); refreshStatus() }, [])
   useEffect(() => { const t = setInterval(refreshStatus, 3000); return () => clearInterval(t) }, [])
+  // 切换 skill 时拉取 env 配置（执行目录等）
+  useEffect(() => {
+    getEnv(skill).then(j => { if (j.ok) setCwd(j.cwd || '') }).catch(() => {})
+  }, [skill])
   function refresh() { getTasks().then(setTasks).catch(() => {}) }
   function refreshStatus() { getBatchStatus().then(setBatchState).catch(() => {}) }
 
   async function doStart() {
     setInfo('发起中…')
-    const j = await startBatch({ agent, skill, repeat, permission_mode: perm, device: device || undefined })
+    const j = await startBatch({ agent, skill, repeat, permission_mode: perm, device: device || undefined, cwd: cwd || undefined })
     setInfo(j.ok ? `已发起：${j.total} 个任务 × ${j.repeat} 次（agent=${j.agent}）` : (j.error || '发起失败'))
     refreshStatus()
   }
@@ -88,6 +93,12 @@ export default function BatchEval() {
           <option value="acceptEdits">acceptEdits</option>
           <option value="">默认</option>
         </select>
+      </div>
+      <div className="launcher-row">
+        <label>执行目录</label>
+        <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
+               placeholder="agent 工作目录（含 .mcp.json / .claude/skills）" style={{ flex: 1 }} />
+        <span className="muted" style={{ fontSize: 10 }}>MCP 从该目录 .mcp.json 加载 · skill 从 ~/.claude/skills 加载</span>
       </div>
       <div className="launcher-actions">
         <button className="primary" onClick={doStart} disabled={running || !tasks.length}>
