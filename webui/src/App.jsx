@@ -244,7 +244,7 @@ export default function App() {
           <EvalMatrix />
         ) : (
           <>
-            {viewMode === 'batch' && <BatchEval />}
+            {viewMode === 'batch' && !cur && <BatchEval />}
             {!cur ? (
               <div className="emptyview">{viewMode === 'batch'
                 ? '从左侧选择批量评测会话查看单次报告'
