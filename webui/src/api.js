@@ -163,6 +163,13 @@ export async function generateTasks(params) {
   return r.json()
 }
 
+export async function fetchDkDevices(params) {
+  const r = await fetch(`${BASE}/api/dk/devices`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+  })
+  return r.json()
+}
+
 export async function startBatch(params) {
   const r = await fetch(`${BASE}/api/batch/start`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),

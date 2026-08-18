@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus } from '../api.js'
+import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const SKILLS = ['uu_remote', 'g66', 'airgattai', 'generic']
@@ -25,6 +25,10 @@ export default function BatchEval() {
   const [batchState, setBatchState] = useState({})
   const [editing, setEditing] = useState(null)
   const [genDomain, setGenDomain] = useState('uu_remote')
+  const [dkToken, setDkToken] = useState('')
+  const [dkGroup, setDkGroup] = useState('12')
+  const [dkDevices, setDkDevices] = useState([])
+  const [device, setDevice] = useState('')
   const [info, setInfo] = useState('')
 
   useEffect(() => { refresh(); refreshStatus() }, [])
@@ -34,14 +38,14 @@ export default function BatchEval() {
 
   async function doStart() {
     setInfo('发起中…')
-    const j = await startBatch({ agent, skill, repeat, permission_mode: perm })
+    const j = await startBatch({ agent, skill, repeat, permission_mode: perm, device: device || undefined })
     setInfo(j.ok ? `已发起：${j.total} 个任务 × ${j.repeat} 次（agent=${j.agent}）` : (j.error || '发起失败'))
     refreshStatus()
   }
   async function doStop() { await stopBatch(); refreshStatus() }
   async function doGen() {
-    const j = await generateTasks({ domain: genDomain })
-    setInfo(j.ok ? `已生成 ${j.generated} 个任务（${genDomain} L1-L4）` : (j.error || '生成失败'))
+    const j = await generateTasks({ domain: genDomain, params: device ? { device } : undefined })
+    setInfo(j.ok ? `已生成 ${j.generated} 个任务（${genDomain} L1-L4${device ? ' · ' + device : ''}）` : (j.error || '生成失败'))
     refresh()
   }
   async function doSave() {
@@ -50,6 +54,12 @@ export default function BatchEval() {
     else setInfo('保存失败: ' + (j.error || ''))
   }
   async function doDelete(taskId) { await deleteTask(taskId); refresh() }
+  async function doFetchDk() {
+    setInfo('拉取设备中…')
+    const j = await fetchDkDevices({ token: dkToken || undefined, group_id: dkGroup })
+    if (j.ok) { setDkDevices(j.devices || []); setInfo(`获取到 ${(j.devices || []).length} 台设备`) }
+    else setInfo(j.error || '拉取失败')
+  }
 
   const running = batchState.state === 'running'
 
@@ -89,6 +99,26 @@ export default function BatchEval() {
         </span>
       </div>
       {info && <div className="info">{info}</div>}
+
+      <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+        <label>DK 配置</label>
+        <input type="password" value={dkToken} onChange={e => setDkToken(e.target.value)} placeholder="dk_token（留空自动读 config）" style={{ flex: 1 }} />
+        <label style={{ width: 'auto' }}>group</label>
+        <input value={dkGroup} onChange={e => setDkGroup(e.target.value)} style={{ width: 56 }} />
+        <button className="ghost" onClick={doFetchDk}>获取设备</button>
+      </div>
+      {dkDevices.length > 0 && (
+        <div className="launcher-row">
+          <label>设备标签</label>
+          <select value={device} onChange={e => setDevice(e.target.value)}>
+            <option value="">（不指定）</option>
+            {dkDevices.map(d => (
+              <option key={d.serialno} value={d.label}>{d.label}</option>
+            ))}
+          </select>
+          <span className="muted" style={{ fontSize: 10 }}>{dkDevices.length} 台 · label 填充 {'{device}'}</span>
+        </div>
+      )}
 
       <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
         <label>生成任务</label>

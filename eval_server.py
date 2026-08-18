@@ -863,6 +863,49 @@ class EvalServer:
                                              int(params.get("count") or 1))
         return {"ok": True, "generated": len(tasks), "tasks": tasks}
 
+    def _dk_default_token(self) -> str:
+        """从 airgattai config.yaml 读 dk.token（兜底，前端未填时自动复用）。"""
+        try:
+            import yaml
+            search = [Path.home() / "airgattai" / "config.yaml",
+                      Path(os.environ.get("APPDATA", "")) / "airgattai" / "config.yaml"]
+            for p in search:
+                if p.is_file():
+                    cfg = yaml.safe_load(open(p, encoding="utf-8")) or {}
+                    t = (cfg.get("dk") or {}).get("token", "")
+                    if t:
+                        return t
+        except Exception:
+            pass
+        return ""
+
+    def fetch_dk_devices(self, params: dict) -> dict:
+        """用 dk_token + dk_group 拉取 DK 设备列表（serialno + 标签）。"""
+        token = params.get("token") or self._dk_default_token()
+        group_id = params.get("group_id")
+        if not token or group_id is None:
+            return {"ok": False, "error": "缺少 dk_token 或 dk_group"}
+        try:
+            import requests
+            base = os.environ.get("DK_BASE_URL", "https://devicefarm-airlab.nie.netease.com")
+            resp = requests.get(
+                f"{base}/v1/win_dev/",
+                params={"group_id": int(group_id), "page_size": 100},
+                headers={"Authorization": f"Token {token}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            devices = []
+            for d in data.get("results", []):
+                sn = d.get("serialno")
+                label = ((d.get("device_info") or {}).get("name")
+                         or d.get("alias") or d.get("model", "")) or sn
+                devices.append({"serialno": sn, "label": label})
+            return {"ok": True, "devices": devices, "group_id": int(group_id)}
+        except Exception as exc:
+            return {"ok": False, "error": f"DK 拉取失败: {exc}"}
+
     def start_batch(self, params: dict) -> dict:
         """发起批量评测：后台线程跑 run_batch，SSE 发布 batch-progress。"""
         agent = params.get("agent") or "claude"
@@ -886,7 +929,7 @@ class EvalServer:
             except Exception:
                 env = {}
         cwd = params.get("cwd") or env.get("cwd")
-        device = env.get("device")
+        device = params.get("device") or env.get("device")
         if device:
             for t in tasks:
                 t["query"] = t.get("query", "").replace("{device}", device)
@@ -1328,6 +1371,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self.server.eval.save_task(body))
         elif self.path == "/api/tasks/generate":
             self._send_json(self.server.eval.gen_tasks(body))
+        elif self.path == "/api/dk/devices":
+            self._send_json(self.server.eval.fetch_dk_devices(body))
         elif self.path == "/api/batch/start":
             self._send_json(self.server.eval.start_batch(body))
         elif self.path == "/api/batch/stop":
