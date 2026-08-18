@@ -314,6 +314,7 @@ class EvalServer:
             self._records.add({
                 "session_id": session_id,
                 "agent": agent,
+                "model": metrics.get("model"),
                 "level": verdict["level"],
                 "level_source": verdict["level_source"],
                 "level_reason": verdict["level_reason"],

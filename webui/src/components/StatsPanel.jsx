@@ -5,22 +5,30 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const fmtDur = ms => ms == null ? '—' : (ms / 1000).toFixed(0) + 's'
 const fmtSD = (m, sd) => m == null ? '—' : (sd == null ? `${m}` : `${m} ± ${sd}`)
 const fmtPct = x => x == null ? '—' : (x * 100).toFixed(0) + '%'
+const fmtTok = n => n == null ? '—' : (n >= 10000 ? (n / 10000).toFixed(1) + '万' : n.toLocaleString())
 const LEVEL_COLOR = { L1: '#58a6ff', L2: '#2da44e', L3: '#f0883e', L4: '#cf222e' }
 
-// 统计总览：task 级总表（SR + 均值±σ）→ 展开 n 次执行 → 人工复核
+// 统计总览：task 级总表（agent/模型/SR/均值±σ）→ 展开 n 次执行 → 人工复核
 export default function StatsPanel() {
   const [rows, setRows] = useState(null)
   const [open, setOpen] = useState(null)
   const [execs, setExecs] = useState([])
   const [reviewing, setReviewing] = useState(null)
+  const [fAgent, setFAgent] = useState('')
+  const [fSkill, setFSkill] = useState('')
+  const [fLevel, setFLevel] = useState('')
+  const [fModel, setFModel] = useState('')
 
   useEffect(() => { refresh() }, [])
   function refresh() { getStats().then(setRows).catch(() => {}) }
 
-  async function toggle(taskId) {
-    if (open === taskId) { setOpen(null); return }
-    setOpen(taskId)
-    setExecs(await getExecutions(taskId))
+  const rowKey = r => (r.task_id || '') + '|' + (r.model || '')
+
+  async function toggle(r) {
+    const k = rowKey(r)
+    if (open === k) { setOpen(null); return }
+    setOpen(k)
+    setExecs(await getExecutions(r.task_id))
   }
 
   async function saveReview(sid, patch) {
@@ -28,34 +36,49 @@ export default function StatsPanel() {
     if (j.ok) {
       setReviewing(null)
       refresh()
-      if (open) setExecs(await getExecutions(open))
+      if (open) setExecs(await getExecutions(open.split('|')[0]))
     }
   }
 
   if (!rows) return <div className="muted" style={{ padding: 20 }}>加载中…</div>
 
+  const agents = [...new Set(rows.map(r => r.agent).filter(Boolean))]
+  const skills = [...new Set(rows.map(r => r.skill_expected).filter(Boolean))]
+  const levels = [...new Set(rows.map(r => r.level).filter(Boolean))]
+  const models = [...new Set(rows.map(r => r.model).filter(Boolean))]
+  const filtered = rows.filter(r =>
+    (!fAgent || r.agent === fAgent) && (!fSkill || r.skill_expected === fSkill) &&
+    (!fLevel || r.level === fLevel) && (!fModel || r.model === fModel))
+
   return (
     <div className="panel">
-      <h2>统计总览 · {rows.length} 个任务 <button className="ghost" onClick={refresh} style={{ float: 'right' }}>↻</button></h2>
+      <h2>统计总览 · {filtered.length}/{rows.length} 个任务 <button className="ghost" onClick={refresh} style={{ float: 'right' }}>↻</button></h2>
+      <div className="launcher-row" style={{ marginBottom: 8 }}>
+        <label>筛选</label>
+        <select value={fAgent} onChange={e => setFAgent(e.target.value)}><option value="">agent 全部</option>{agents.map(a => <option key={a} value={a}>{a}</option>)}</select>
+        <select value={fSkill} onChange={e => setFSkill(e.target.value)}><option value="">skill 全部</option>{skills.map(s => <option key={s} value={s}>{s}</option>)}</select>
+        <select value={fLevel} onChange={e => setFLevel(e.target.value)}><option value="">level 全部</option>{levels.map(l => <option key={l} value={l}>{l}</option>)}</select>
+        <select value={fModel} onChange={e => setFModel(e.target.value)}><option value="">模型 全部</option>{models.map(m => <option key={m} value={m}>{m}</option>)}</select>
+      </div>
       <table style={{ tableLayout: 'fixed' }}>
         <colgroup>
-          <col style={{ width: '18%' }} /><col style={{ width: '8%' }} />
+          <col style={{ width: '16%' }} /><col style={{ width: '8%' }} />
+          <col style={{ width: '12%' }} /><col style={{ width: '8%' }} />
           <col style={{ width: '5%' }} /><col style={{ width: '5%' }} />
-          <col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
-          <col style={{ width: '14%' }} /><col style={{ width: '11%' }} />
-          <col style={{ width: '9%' }} /><col style={{ width: '8%' }} />
+          <col style={{ width: '10%' }} /><col style={{ width: '18%' }} />
+          <col style={{ width: '18%' }} />
         </colgroup>
         <thead><tr>
-          <th>任务</th><th>skill</th><th>L</th><th className="num">n</th>
-          <th className="num">成功率</th><th className="num">耗时(均值±σ)</th>
-          <th className="num">成本¥(均值±σ)</th><th className="num">工具成功率</th>
-          <th className="num">工具次数</th><th className="num">人工介入</th>
+          <th>任务</th><th>agent</th><th>模型</th><th>skill</th><th>L</th><th className="num">n</th>
+          <th className="num">成功率</th><th className="num">耗时(均值±σ)</th><th className="num">成本¥(均值±σ)</th>
         </tr></thead>
         <tbody>
-          {rows.map(r => (
-            <React.Fragment key={r.task_id}>
-              <tr onClick={() => toggle(r.task_id)} style={{ cursor: 'pointer' }}>
-                <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.task_id}>{esc(r.task_id || '')}</td>
+          {filtered.map(r => (
+            <React.Fragment key={rowKey(r)}>
+              <tr onClick={() => toggle(r)} style={{ cursor: 'pointer' }}>
+                <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.task_id}>{esc(r.task_id || '—')}</td>
+                <td>{esc(r.agent || '—')}</td>
+                <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.model}>{esc(r.model || '—')}</td>
                 <td>{esc(r.skill_expected || '—')}</td>
                 <td><span className="badge" style={{ background: (LEVEL_COLOR[r.level] || '#6e7681') + '33', color: LEVEL_COLOR[r.level] || '#6e7681' }}>{r.level || '?'}</span></td>
                 <td className="num">{r.n}</td>
@@ -64,18 +87,15 @@ export default function StatsPanel() {
                 </td>
                 <td className="num">{fmtSD(Math.round(r.duration_ms / 1000), r.duration_sd != null ? Math.round(r.duration_sd / 1000) : null)}</td>
                 <td className="num">{r.cost_cny != null ? r.cost_cny.toFixed(3) + (r.cost_sd != null ? ' ± ' + r.cost_sd.toFixed(3) : '') : '—'}</td>
-                <td className="num">{fmtPct(r.tool_sr)}{r.tool_sr_sd != null ? <span style={{ fontSize: 9, color: 'var(--ink3)' }}> ±{fmtPct(r.tool_sr_sd)}</span> : null}</td>
-                <td className="num">{fmtSD(r.tool_calls, r.tool_calls_sd)}</td>
-                <td className="num">{r.human_interventions ?? '—'}</td>
               </tr>
-              {open === r.task_id && (
-                <tr><td colSpan="10" style={{ padding: 0, background: 'var(--bg)' }}>
+              {open === rowKey(r) && (
+                <tr><td colSpan="9" style={{ padding: 0, background: 'var(--bg)' }}>
                   <ExecList execs={execs} reviewing={reviewing} setReviewing={setReviewing} saveReview={saveReview} />
                 </td></tr>
               )}
             </React.Fragment>
           ))}
-          {!rows.length && <tr><td className="empty" colSpan="10" style={{ padding: 12 }}>暂无统计——先跑批量评测（repeat≥1）</td></tr>}
+          {!filtered.length && <tr><td className="empty" colSpan="9" style={{ padding: 12 }}>暂无统计——先跑批量评测（repeat≥1）</td></tr>}
         </tbody>
       </table>
     </div>
@@ -87,7 +107,8 @@ function ExecList({ execs, reviewing, setReviewing, saveReview }) {
   return (
     <table style={{ margin: 0 }}>
       <thead><tr><th>#</th><th>成功</th><th>级别</th><th className="num">耗时</th>
-        <th className="num">成本¥</th><th className="num">工具</th><th>结束</th><th>复核</th></tr></thead>
+        <th className="num">成本¥</th><th className="num">工具成功率</th><th className="num">工具次数</th>
+        <th className="num">人工介入</th><th className="num">Token(in)</th><th>结束</th><th>复核</th></tr></thead>
       <tbody>
         {execs.map(e => (
           <ReviewRow key={e.session_id} e={e} reviewing={reviewing} setReviewing={setReviewing} saveReview={saveReview} />
@@ -102,6 +123,8 @@ function ReviewRow({ e, reviewing, setReviewing, saveReview }) {
   const [success, setSuccess] = useState(e.success)
   const [note, setNote] = useState(e.review_note || '')
   const editing = reviewing === e.session_id
+  const sf = (e.tool_success || 0) + (e.tool_fail || 0)
+  const tsr = sf > 0 ? (e.tool_success || 0) / sf : null
   return (
     <tr>
       <td className="num">r{e.run_idx}</td>
@@ -109,7 +132,10 @@ function ReviewRow({ e, reviewing, setReviewing, saveReview }) {
       <td><span className="badge" style={{ background: (LEVEL_COLOR[e.level] || '#6e7681') + '33', color: LEVEL_COLOR[e.level] || '#6e7681' }}>{e.level}</span></td>
       <td className="num">{fmtDur(e.duration_ms)}</td>
       <td className="num">{e.cost_cny != null ? e.cost_cny.toFixed(3) : '—'}</td>
+      <td className="num">{tsr != null ? fmtPct(tsr) : '—'}</td>
       <td className="num">{e.tool_calls_total ?? '—'}</td>
+      <td className="num">{e.human_interventions ?? '—'}</td>
+      <td className="num">{fmtTok(e.input_tokens)}</td>
       <td className="muted" style={{ fontSize: 11 }}>{e.turn_end_reason || '—'}</td>
       <td>
         {editing ? (

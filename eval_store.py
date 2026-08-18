@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS executions (
     task_id TEXT,
     run_idx INTEGER DEFAULT 1,
     agent TEXT,
+    model TEXT,
     skill_expected TEXT,
     level TEXT,
     level_source TEXT,
@@ -65,7 +66,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 """
 
 _FIELDS = [
-    "session_id", "run_id", "task_id", "run_idx", "agent", "skill_expected",
+    "session_id", "run_id", "task_id", "run_idx", "agent", "model", "skill_expected",
     "level", "level_source", "level_reason", "success", "success_by",
     "tool_calls_total", "tool_success", "tool_fail", "input_tokens",
     "output_tokens", "cache_read_tokens", "cost_cny", "duration_ms",
@@ -93,7 +94,7 @@ class EvalStore:
         for col, typ in {
             "tool_success": "INTEGER", "tool_fail": "INTEGER",
             "output_tokens": "INTEGER", "cache_read_tokens": "INTEGER",
-            "duration_ms": "INTEGER",
+            "duration_ms": "INTEGER", "model": "TEXT",
         }.items():
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE executions ADD COLUMN {col} {typ}")
@@ -180,11 +181,11 @@ class EvalStore:
         recs = self.all()
         groups = {}
         for r in recs:
-            key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"))
+            key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"), r.get("model"))
             groups.setdefault(key, []).append(r)
         rows = []
         for key, rs in sorted(groups.items(), key=lambda kv: tuple(str(x or "") for x in kv[0])):
-            task_id, skill, level, agent = key
+            task_id, skill, level, agent, model = key
             n = len(rs)
             success = sum(1 for r in rs if r.get("success"))
             tool_srs = []
@@ -200,7 +201,7 @@ class EvalStore:
             tin, tin_sd = self._mean_sd([r.get("input_tokens") for r in rs])
             inter, _ = self._mean_sd([r.get("human_interventions") for r in rs])
             rows.append({
-                "task_id": task_id, "skill_expected": skill, "level": level, "agent": agent,
+                "task_id": task_id, "skill_expected": skill, "level": level, "agent": agent, "model": model,
                 "n": n, "success": success,
                 "sr": round(success / n, 3) if n else None,
                 "duration_ms": round(dur, 1) if dur is not None else None,
