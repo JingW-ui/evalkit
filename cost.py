@@ -31,6 +31,37 @@ def load_pricing(conf_path: str = None) -> dict:
     return conf.get("pricing", {})
 
 
+# ===== 峰谷定价（DeepSeek 2026-08-17 起：高峰=北京时间 9-12、14-18，高峰价=空闲×2） =====
+
+def is_peak_hour(pricing: dict = None, now=None) -> bool:
+    """当前时间是否高峰时段（本机时间，假定北京时间）。"""
+    if pricing is None:
+        pricing = load_pricing()
+    import time
+    now = now or time.localtime()
+    h = now.tm_hour
+    for start, end in pricing.get("peak_hours", []):
+        if start <= h < end:
+            return True
+    return False
+
+
+def peak_multiplier(pricing: dict = None) -> float:
+    """当前时段的价格倍率：高峰=peak_multiplier，空闲=1.0。"""
+    if pricing is None:
+        pricing = load_pricing()
+    return float(pricing.get("peak_multiplier", 1.0)) if is_peak_hour(pricing) else 1.0
+
+
+def pick_price(price, pricing: dict = None):
+    """峰谷价格选择：dict 含 peak/offpeak 时按当前时间选；普通 dict 原样返回。"""
+    if isinstance(price, dict) and "peak" in price and "offpeak" in price:
+        if pricing is None:
+            pricing = load_pricing()
+        return price["peak" if is_peak_hour(pricing) else "offpeak"]
+    return price
+
+
 def get_multiplier(model: str, pricing: dict = None) -> float:
     """查模型的倍率（相对效果档 1x）。未命中返回 None（需反推补映射）。"""
     if pricing is None:
@@ -47,16 +78,20 @@ def get_multiplier(model: str, pricing: dict = None) -> float:
 
 
 def anchor_unit_cost(pricing: dict = None) -> dict:
-    """返回「效果(1x)」档基准单价（¥/百万 tokens），由锚点÷锚点倍率得到。"""
+    """返回「效果(1x)」档基准单价（¥/百万 tokens），由锚点÷锚点倍率得到。
+
+    anchor_per_1m 存空闲价；高峰时段整体 × peak_multiplier。
+    """
     if pricing is None:
         pricing = load_pricing()
     anchor = pricing.get("anchor_per_1m", {})
     am = pricing.get("anchor_multiplier", 0.1) or 0.1
+    mult = peak_multiplier(pricing)
     return {
-        "input": anchor.get("input", 0) / am,
-        "output": anchor.get("output", 0) / am,
-        "cache_read": anchor.get("cache_read", 0) / am,
-        "cache_write": anchor.get("cache_write", 0) / am,
+        "input": anchor.get("input", 0) / am * mult,
+        "output": anchor.get("output", 0) / am * mult,
+        "cache_read": anchor.get("cache_read", 0) / am * mult,
+        "cache_write": anchor.get("cache_write", 0) / am * mult,
     }
 
 
@@ -83,9 +118,10 @@ def theoretical_cost(model: str, tokens: dict, pricing: dict = None) -> float:
 # ===== 挂牌价表直接估算（USD） =====
 
 def _anchor_usd(pricing: dict) -> dict:
-    """锚点模型（deepseek-v4-flash）的 USD 单价（¥→USD 折算，汇率近似 0.14）。"""
+    """锚点模型（deepseek-v4-flash）的 USD 单价（¥→USD 折算，汇率近似 0.14，含峰谷）。"""
     anchor = pricing.get("anchor_per_1m", {})
-    return {k: v * 0.14 for k, v in anchor.items()}
+    mult = peak_multiplier(pricing)
+    return {k: v * 0.14 * mult for k, v in anchor.items()}
 
 
 def estimate_cost_usd(model: str, tokens: dict, pricing: dict = None) -> float | None:
@@ -117,6 +153,8 @@ def estimate_cost_usd(model: str, tokens: dict, pricing: dict = None) -> float |
         anchor = table.get(pricing.get("anchor_model", "")) or _anchor_usd(pricing)
         am = pricing.get("anchor_multiplier", 0.1) or 0.1
         price = {k: v * mult / am for k, v in anchor.items()}
+    # 峰谷价格选择（deepseek 等按当前时段取 peak/offpeak）
+    price = pick_price(price, pricing)
     ti = tokens.get("input_tokens", 0)
     to = tokens.get("output_tokens", 0)
     cr = tokens.get("cache_read_tokens", tokens.get("cache_read_input_tokens", 0))

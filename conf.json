@@ -2,11 +2,13 @@
   "pricing": {
     "currency": "CNY",
     "cny_per_usd": 7.2,
-    "note": "成本估算策略：官方/真实成本优先（claude total_cost_usd、airlab cost 字段）；缺失时按 models_usd 挂牌价表直接估算（2026-04 调研，USD/百万 tokens）。展示统一换算 RMB（cny_per_usd）。平台档位名（deepseek-v4-flash 等）走 anchor×multiplier 推算，见 cost.py estimate_cost_usd",
+    "note": "成本估算策略：官方/真实成本优先（claude total_cost_usd、airlab cost 字段）；缺失时按 models_usd 挂牌价表直接估算（USD/百万 tokens）。展示统一换算 RMB（cny_per_usd）。平台档位名（deepseek-v4-flash 等）走 anchor×multiplier 推算，见 cost.py estimate_cost_usd",
+    "peak_hours": [[9, 12], [14, 18]],
+    "peak_multiplier": 2.0,
     "anchor_per_1m": {
-      "input": 1.0,
-      "output": 2.0,
-      "cache_read": 0.02,
+      "input": 1.5,
+      "output": 4.5,
+      "cache_read": 0.05,
       "cache_write": 0.0
     },
     "anchor_model": "deepseek-v4-flash",
@@ -42,10 +44,12 @@
         "cache_write": 1.1
       },
       "deepseek-v4-flash": {
-        "input": 0.14,
-        "output": 0.28,
-        "cache_read": 0.003,
-        "cache_write": 0.18
+        "offpeak": {"input": 0.208, "output": 0.625, "cache_read": 0.0069, "cache_write": 0.0},
+        "peak": {"input": 0.417, "output": 1.25, "cache_read": 0.0139, "cache_write": 0.0}
+      },
+      "deepseek-v4-pro": {
+        "offpeak": {"input": 0.625, "output": 1.875, "cache_read": 0.0208, "cache_write": 0.0},
+        "peak": {"input": 1.25, "output": 3.75, "cache_read": 0.0417, "cache_write": 0.0}
       },
       "claude-sonnet-4.6": {
         "input": 3.0,
