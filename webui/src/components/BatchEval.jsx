@@ -79,6 +79,10 @@ export default function BatchEval() {
             <button key={a} className={`ghost ${agent === a ? 'active' : ''}`} onClick={() => setAgent(a)}>{a}</button>
           ))}
         </div>
+        <label style={{ width: 'auto' }}>执行目录</label>
+        <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
+               placeholder="含 .mcp.json / .claude/skills" style={{ flex: 1 }} />
+        <span className="muted" style={{ fontSize: 10 }}>MCP/skill 从该目录加载</span>
       </div>
       <div className="launcher-row">
         <label>Skill</label>
@@ -93,12 +97,6 @@ export default function BatchEval() {
           <option value="acceptEdits">acceptEdits</option>
           <option value="">默认</option>
         </select>
-      </div>
-      <div className="launcher-row">
-        <label>执行目录</label>
-        <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
-               placeholder="agent 工作目录（含 .mcp.json / .claude/skills）" style={{ flex: 1 }} />
-        <span className="muted" style={{ fontSize: 10 }}>MCP 从该目录 .mcp.json 加载 · skill 从该目录 .claude/skills 加载</span>
       </div>
       <div className="launcher-actions">
         <button className="primary" onClick={doStart} disabled={running || !tasks.length}>
