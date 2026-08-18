@@ -350,6 +350,7 @@ def discover_all(projects_dir: str | Path | None = None,
                  eval_runs: dict | None = None,
                  samples_dir: str | Path | None = None,
                  codemaker_db: str | Path | None = None,
+                 batch_root: str | Path | None = None,
                  limit: int = 300) -> list[SessionInfo]:
     """合并全部会话来源：受限样本目录（若配置，则只用它）+ Claude projects +
     本评测落盘 + Codemaker 会话库（若指定）+ eval 发起（运行中）。
@@ -382,6 +383,9 @@ def discover_all(projects_dir: str | Path | None = None,
         sessions += discover_samples_dir(samples_dir, limit=limit)
     else:
         sessions += discover_session_root(session_root)
+
+    # 批量评测落盘（results/batch）也并入会话评测列表（独立于 samples_dir 限制）
+    sessions += discover_session_root(batch_root)
 
     # 真实 Claude Code projects 始终并入（独立于 samples_dir 限制——samples 只是示例，
     # 用户本机全部真实会话日志都要进评测系统）

@@ -398,6 +398,7 @@ class EvalServer:
             eval_runs=eval_runs,
             samples_dir=self.samples_dir,
             codemaker_db=self.codemaker_db,
+            batch_root=self.batch_root,
         )
         # 手动指定的会话路径（--sessions / /api/sessions/add）
         for path in self.extra_paths:
