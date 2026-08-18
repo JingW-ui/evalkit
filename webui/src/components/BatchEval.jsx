@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv } from '../api.js'
+import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv, getModels } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const SKILLS = ['uu_remote', 'g66', 'airgattai', 'generic']
@@ -30,9 +30,11 @@ export default function BatchEval() {
   const [dkGroup, setDkGroup] = useState('12')
   const [dkDevices, setDkDevices] = useState([])
   const [device, setDevice] = useState('')
+  const [models, setModels] = useState([])
+  const [model, setModel] = useState('')
   const [info, setInfo] = useState('')
 
-  useEffect(() => { refresh(); refreshStatus() }, [])
+  useEffect(() => { refresh(); refreshStatus(); getModels().then(setModels).catch(() => {}) }, [])
   useEffect(() => { const t = setInterval(refreshStatus, 3000); return () => clearInterval(t) }, [])
   // 切换 skill 时拉取 env 配置（执行目录等）
   useEffect(() => {
@@ -43,7 +45,11 @@ export default function BatchEval() {
 
   async function doStart() {
     setInfo('发起中…')
-    const j = await startBatch({ agent, skill, repeat, permission_mode: perm, device: device || undefined, cwd: cwd || undefined })
+    const j = await startBatch({
+      agent, skill, repeat, permission_mode: perm, device: device || undefined, cwd: cwd || undefined,
+      model: model ? (agent === 'codemaker' ? `netease-codemaker/${model}` : model) : undefined,
+      provider: (agent === 'claude' && model) ? 'codemaker_deepseek' : undefined,
+    })
     setInfo(j.ok ? `已发起：${j.total} 个任务 × ${j.repeat} 次（agent=${j.agent}）` : (j.error || '发起失败'))
     refreshStatus()
   }
@@ -79,6 +85,11 @@ export default function BatchEval() {
             <button key={a} className={`ghost ${agent === a ? 'active' : ''}`} onClick={() => setAgent(a)}>{a}</button>
           ))}
         </div>
+        <label style={{ width: 'auto' }}>模型</label>
+        <select value={model} onChange={e => setModel(e.target.value)} style={{ width: 180, flex: 'none' }}>
+          <option value="">（默认）</option>
+          {models.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
         <label style={{ width: 'auto' }}>执行目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
                placeholder="含 .mcp.json / .claude/skills" style={{ width: 300, flex: 'none' }} />

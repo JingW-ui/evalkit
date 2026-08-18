@@ -930,6 +930,26 @@ class EvalServer:
         return {"ok": True, "skill": skill, "cwd": env.get("cwd"),
                 "device": env.get("device"), "note": env.get("note")}
 
+    def fetch_models(self, params=None) -> dict:
+        """获取可用模型列表（codemaker models 的 netease-codemaker 系）。"""
+        try:
+            import subprocess
+            bin_path = str(Path.home() / ".codemaker" / "bin" / "codemaker.exe")
+            out = subprocess.run([bin_path, "models"], capture_output=True, text=True,
+                                 timeout=30, encoding="utf-8", errors="replace").stdout
+            models = []
+            for line in out.splitlines():
+                line = line.strip()
+                if line.startswith("netease-codemaker/"):
+                    name = line.split("/", 1)[1].strip()
+                    if name:
+                        models.append(name)
+            if not models:
+                return {"ok": False, "error": "未获取到模型列表"}
+            return {"ok": True, "models": models}
+        except Exception as exc:
+            return {"ok": False, "error": f"获取模型列表失败: {exc}"}
+
     def start_batch(self, params: dict) -> dict:
         """发起批量评测：后台线程跑 run_batch，SSE 发布 batch-progress。"""
         agent = params.get("agent") or "claude"
@@ -1276,6 +1296,8 @@ class Handler(BaseHTTPRequestHandler):
             import urllib.parse
             qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             self._send_json(self.server.eval.get_env({"skill": qs.get("skill", [""])[0]}))
+        elif self.path == "/api/models":
+            self._send_json(self.server.eval.fetch_models())
         elif self.path == "/api/batch/status":
             self._send_json(self.server.eval.batch_status())
         elif self.path == "/api/providers":

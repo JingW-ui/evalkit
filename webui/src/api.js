@@ -192,6 +192,12 @@ export async function getEnv(skill) {
   return r.json()
 }
 
+export async function getModels() {
+  const r = await fetch(`${BASE}/api/models`)
+  const j = await r.json()
+  return j.models || []
+}
+
 export function connectSSE(onFrame, onStatus) {
   const es = new EventSource(`${BASE}/events`)
   es.onopen = () => onStatus && onStatus('connected')
