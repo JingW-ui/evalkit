@@ -137,21 +137,23 @@ def discover_session_root(root: str | Path | None) -> list[SessionInfo]:
         sid = sess_dir.name
         raw = sess_dir / "raw.jsonl"
         log = sess_dir / "session.jsonl"
-        if raw.is_file():
+        # 优先 session.jsonl（统一事件流，replay 用 DSH 口径直接解析）；
+        # raw.jsonl 是 stream-json 原始行，与 claude_jsonl_to_events（Claude Code JSONL）口径不同，仅兜底。
+        if log.is_file():
+            out.append(SessionInfo(
+                session_id=sid, agent="claude", state="history", source="session_root",
+                path=str(log),
+                query=_session_query_from_log(log),
+                updated_at=_mtime_ms(log), size=log.stat().st_size,
+                extra={"kind": "dsh_unified"},
+            ))
+        elif raw.is_file():
             out.append(SessionInfo(
                 session_id=sid, agent="claude", state="history", source="session_root",
                 path=str(raw),
                 query=_session_query_from_log(log) or _first_user_query(raw),
                 updated_at=_mtime_ms(raw), size=raw.stat().st_size,
                 extra={"kind": "claude_stream_json"},
-            ))
-        elif log.is_file():
-            out.append(SessionInfo(
-                session_id=sid, agent="dsh", state="history", source="session_root",
-                path=str(log),
-                query=_session_query_from_log(log),
-                updated_at=_mtime_ms(log), size=log.stat().st_size,
-                extra={"kind": "dsh_unified"},
             ))
     return out
 
