@@ -115,9 +115,8 @@ export default function BatchEval() {
         </select>
         <label style={{ width: 'auto' }}>执行目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
-               placeholder="含 .mcp.json / .claude/skills" style={{ width: 300, flex: 'none' }} />
+               placeholder="含 .mcp.json / .claude/skills" title="MCP/skill 从该目录加载" style={{ width: 300, flex: 'none' }} />
         <button className="ghost" onClick={() => { setFsPickOpen(!fsPickOpen); if (!fs && !fsPickOpen) navFs(cwd) }}>浏览</button>
-        <span className="muted" style={{ fontSize: 10 }}>MCP/skill 从该目录加载</span>
       </div>
       {fsPickOpen && (
         <div className="fs-picker" style={{ margin: '4px 0 10px 80px' }}>
