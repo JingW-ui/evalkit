@@ -81,7 +81,7 @@ export default function BatchEval() {
         </div>
         <label style={{ width: 'auto' }}>执行目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
-               placeholder="含 .mcp.json / .claude/skills" style={{ flex: 1 }} />
+               placeholder="含 .mcp.json / .claude/skills" style={{ width: 300 }} />
         <span className="muted" style={{ fontSize: 10 }}>MCP/skill 从该目录加载</span>
       </div>
       <div className="launcher-row">
