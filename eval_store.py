@@ -114,6 +114,18 @@ class EvalStore:
             self._conn.execute(sql, row)
             self._conn.commit()
 
+    def get(self, session_id: str) -> dict | None:
+        """单条记录（success 还原 bool）；不存在返回 None。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM executions WHERE session_id=?", (session_id,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        if d.get("success") is not None:
+            d["success"] = bool(d["success"])
+        return d
+
     def all(self) -> list:
         """全部记录，按 _at 倒序（最新在前），success 还原为 bool。"""
         with self._lock:

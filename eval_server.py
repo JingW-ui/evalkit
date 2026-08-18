@@ -301,7 +301,21 @@ class EvalServer:
         判定结果回写 metrics["judge"]（前端「任务成功率」独立展示），返回 verdict。
         """
         try:
+            # 已有批量跑测记录（task_id 非空）则不覆盖：避免单会话评测丢失 task 归属、level/model 被覆盖
+            existing = self._records.get(session_id)
+            if existing and existing.get("task_id"):
+                return None
             verdict = judge_eval(query, session_id, metrics, text)
+            # 匹配 task_id（SQLite tasks 表，query 包含匹配）——单会话评测覆盖批量跑测记录时保留 task 归属
+            task_id = None
+            try:
+                for t in self._records.list_tasks():
+                    tq = t.get("query") or ""
+                    if tq and tq in (query or ""):
+                        task_id = t.get("task_id")
+                        break
+            except Exception:
+                task_id = None
             # 任务级判定回写 metrics（与工具成功率是两回事：任务成功率=锚点/诚实性判定）
             if isinstance(metrics, dict):
                 metrics["judge"] = {
@@ -313,6 +327,7 @@ class EvalServer:
                 }
             self._records.add({
                 "session_id": session_id,
+                "task_id": task_id,
                 "agent": agent,
                 "model": metrics.get("model"),
                 "level": verdict["level"],

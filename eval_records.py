@@ -186,6 +186,10 @@ class EvalRecords:
         """全部记录（最新在前）。reload 参数保留以兼容旧接口，SQLite 每次实时查询。"""
         return self._store.all()
 
+    def get(self, session_id):
+        """单条记录；不存在返回 None。"""
+        return self._store.get(session_id)
+
     def matrix(self) -> dict:
         """能力画像（agent×L1-L4 SR + 平均指标）+ 明细列表。"""
         return self._store.matrix()
