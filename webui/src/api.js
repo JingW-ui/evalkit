@@ -123,8 +123,9 @@ export async function getStats() {
   return j.rows || []
 }
 
-export async function getExecutions(taskId) {
-  const r = await fetch(`${BASE}/api/executions?task_id=${encodeURIComponent(taskId || '')}`)
+export async function getExecutions(taskId, model) {
+  const q = `task_id=${encodeURIComponent(taskId || '')}&model=${encodeURIComponent(model || '')}`
+  const r = await fetch(`${BASE}/api/executions?${q}`)
   const j = await r.json()
   return j.executions || []
 }

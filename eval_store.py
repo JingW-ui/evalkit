@@ -178,7 +178,7 @@ class EvalStore:
         duration_ms/duration_sd + cost_cny/cost_sd/cost_sum + tool_sr/tool_sr_sd +
         tool_calls/tool_calls_sd + input_tokens/input_sd + human_interventions。
         """
-        recs = self.all()
+        recs = [r for r in self.all() if r.get("task_id")]
         groups = {}
         for r in recs:
             key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"), r.get("model"))

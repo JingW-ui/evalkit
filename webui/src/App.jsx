@@ -153,8 +153,8 @@ export default function App() {
     }
   }
 
-  async function onSelect(s) {
-    setCur(s); setTab('report')
+  async function onSelect(s, tab = 'report') {
+    setCur(s); setTab(tab)
     setView({ ...initialView(), _sid: s.session_id, status: '挂接中…', statusCls: 'run' })
     setView(prev => ({ ...prev, rawLoading: true }))
     getRaw(s.session_id).then(text => setView(prev => ({ ...prev, raw: text, rawLoading: false })))
@@ -170,6 +170,13 @@ export default function App() {
       }))
     }
     refresh()
+  }
+
+  function openSessionFromStats(sessionId) {
+    const s = batchSessions.find(x => x.session_id === sessionId) || sessions.find(x => x.session_id === sessionId)
+    if (!s) { alert('会话未找到: ' + sessionId); return }
+    setViewMode('batch')
+    onSelect(s, 'trajectory')
   }
 
   async function onAddPath(path) {
@@ -232,7 +239,7 @@ export default function App() {
         </header>
 
         {viewMode === 'stats' ? (
-          <StatsPanel />
+          <StatsPanel onOpenSession={openSessionFromStats} />
         ) : viewMode === 'matrix' ? (
           <EvalMatrix />
         ) : (

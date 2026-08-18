@@ -1287,9 +1287,12 @@ class Handler(BaseHTTPRequestHandler):
             import urllib.parse
             qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             task_id = qs.get("task_id", [None])[0]
+            model = qs.get("model", [None])[0]
             recs = self.server.eval._records.all()
             if task_id:
                 recs = [r for r in recs if r.get("task_id") == task_id]
+            if model:
+                recs = [r for r in recs if r.get("model") == model]
             self._send_json({"executions": recs})
         elif self.path == "/api/tasks":
             self._send_json(self.server.eval.list_tasks())

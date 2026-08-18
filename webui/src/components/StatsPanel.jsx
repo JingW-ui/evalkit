@@ -9,7 +9,7 @@ const fmtTok = n => n == null ? '—' : (n >= 10000 ? (n / 10000).toFixed(1) + '
 const LEVEL_COLOR = { L1: '#58a6ff', L2: '#2da44e', L3: '#f0883e', L4: '#cf222e' }
 
 // 统计总览：task 级总表（agent/模型/SR/均值±σ）→ 展开 n 次执行 → 人工复核
-export default function StatsPanel() {
+export default function StatsPanel({ onOpenSession }) {
   const [rows, setRows] = useState(null)
   const [open, setOpen] = useState(null)
   const [execs, setExecs] = useState([])
@@ -28,7 +28,7 @@ export default function StatsPanel() {
     const k = rowKey(r)
     if (open === k) { setOpen(null); return }
     setOpen(k)
-    setExecs(await getExecutions(r.task_id))
+    setExecs(await getExecutions(r.task_id, r.model))
   }
 
   async function saveReview(sid, patch) {
@@ -36,7 +36,10 @@ export default function StatsPanel() {
     if (j.ok) {
       setReviewing(null)
       refresh()
-      if (open) setExecs(await getExecutions(open.split('|')[0]))
+      if (open) {
+        const [t, m] = open.split('|')
+        setExecs(await getExecutions(t, m))
+      }
     }
   }
 
@@ -90,7 +93,7 @@ export default function StatsPanel() {
               </tr>
               {open === rowKey(r) && (
                 <tr><td colSpan="9" style={{ padding: 0, background: 'var(--bg)' }}>
-                  <ExecList execs={execs} reviewing={reviewing} setReviewing={setReviewing} saveReview={saveReview} />
+                  <ExecList execs={execs} reviewing={reviewing} setReviewing={setReviewing} saveReview={saveReview} onOpenSession={onOpenSession} />
                 </td></tr>
               )}
             </React.Fragment>
@@ -102,23 +105,23 @@ export default function StatsPanel() {
   )
 }
 
-function ExecList({ execs, reviewing, setReviewing, saveReview }) {
+function ExecList({ execs, reviewing, setReviewing, saveReview, onOpenSession }) {
   if (!execs.length) return <div className="muted" style={{ padding: 10 }}>无执行记录</div>
   return (
     <table style={{ margin: 0 }}>
       <thead><tr><th>#</th><th>成功</th><th>级别</th><th className="num">耗时</th>
         <th className="num">成本¥</th><th className="num">工具成功率</th><th className="num">工具次数</th>
-        <th className="num">人工介入</th><th className="num">Token(in)</th><th>结束</th><th>复核</th></tr></thead>
+        <th className="num">人工介入</th><th className="num">Token(in)</th><th>结束</th><th>操作</th></tr></thead>
       <tbody>
         {execs.map(e => (
-          <ReviewRow key={e.session_id} e={e} reviewing={reviewing} setReviewing={setReviewing} saveReview={saveReview} />
+          <ReviewRow key={e.session_id} e={e} reviewing={reviewing} setReviewing={setReviewing} saveReview={saveReview} onOpenSession={onOpenSession} />
         ))}
       </tbody>
     </table>
   )
 }
 
-function ReviewRow({ e, reviewing, setReviewing, saveReview }) {
+function ReviewRow({ e, reviewing, setReviewing, saveReview, onOpenSession }) {
   const [level, setLevel] = useState(e.level)
   const [success, setSuccess] = useState(e.success)
   const [note, setNote] = useState(e.review_note || '')
@@ -152,9 +155,12 @@ function ReviewRow({ e, reviewing, setReviewing, saveReview }) {
             <button className="ghost" onClick={() => setReviewing(null)}>取消</button>
           </span>
         ) : (
-          <button className="ghost" onClick={() => setReviewing(e.session_id)}>
-            复核{e.review_status === 'corrected' ? '·已修正' : ''}
-          </button>
+          <>
+            <button className="ghost" onClick={() => onOpenSession && onOpenSession(e.session_id)}>轨迹</button>
+            <button className="ghost" onClick={() => setReviewing(e.session_id)}>
+              复核{e.review_status === 'corrected' ? '·已修正' : ''}
+            </button>
+          </>
         )}
       </td>
     </tr>
