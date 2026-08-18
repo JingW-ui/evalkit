@@ -384,7 +384,10 @@ class ClaudeEvalBackend:
                "data": {"content": [{"type": "text", "text": query}]}})
 
         # 组装 claude 命令
-        cmd = [self.cli_path, "--print", "--verbose", "--output-format", "stream-json"]
+        # --no-session-persistence：headless 跑测不写 ~/.claude/projects（避免与批量落盘重复，
+        # 也避免会话发现扫到这份副产品产生 task_id 为空的重复记录）；仅 --print 模式有效。
+        cmd = [self.cli_path, "--print", "--verbose", "--output-format", "stream-json",
+               "--no-session-persistence"]
         if self.include_partial_messages:
             cmd.append("--include-partial-messages")
         if self.include_hook_events:
