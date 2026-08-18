@@ -9,7 +9,6 @@ import EvalMatrix from './components/EvalMatrix.jsx'
 import StatsPanel from './components/StatsPanel.jsx'
 import BatchEval from './components/BatchEval.jsx'
 import Inspector from './components/Inspector.jsx'
-import BatchLauncher from './components/BatchLauncher.jsx'
 import { buildReportHtml } from './exportHtml.js'
 
 const initialView = () => ({
@@ -220,7 +219,6 @@ export default function App() {
           <span className="mode-switch">
             <button className={`mode ${viewMode === 'session' ? 'active' : ''}`} onClick={() => setViewMode('session')}>会话评测</button>
             <button className={`mode ${viewMode === 'batch' ? 'active' : ''}`} onClick={() => setViewMode('batch')}>批量评测</button>
-            <button className={`mode ${viewMode === 'launch' ? 'active' : ''}`} onClick={() => setViewMode('launch')}>拉起会话</button>
             <button className={`mode ${viewMode === 'matrix' ? 'active' : ''}`} onClick={() => setViewMode('matrix')}>评测矩阵</button>
             <button className={`mode ${viewMode === 'stats' ? 'active' : ''}`} onClick={() => setViewMode('stats')}>统计总览</button>
           </span>
@@ -237,11 +235,6 @@ export default function App() {
           <StatsPanel />
         ) : viewMode === 'matrix' ? (
           <EvalMatrix />
-        ) : viewMode === 'launch' ? (
-          <BatchLauncher onStarted={t => {
-            // 已在新窗口打开 claude 对话终端：刷新会话列表（新会话日志会自动被发现）
-            refresh()
-          }} current={spinning} />
         ) : (
           <>
             {viewMode === 'batch' && <BatchEval />}

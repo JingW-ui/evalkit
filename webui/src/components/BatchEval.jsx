@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv, getModels } from '../api.js'
+import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv, getModels, launchTerminal, stopTerminal, listTerminals, listFs } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const SKILLS = ['uu_remote', 'g66', 'airgattai', 'generic']
@@ -32,10 +32,15 @@ export default function BatchEval() {
   const [device, setDevice] = useState('')
   const [models, setModels] = useState([])
   const [model, setModel] = useState('')
+  const [terminals, setTerminals] = useState([])
+  const [termOpen, setTermOpen] = useState(false)
+  const [fs, setFs] = useState(null)
+  const [fsErr, setFsErr] = useState('')
+  const [fsPickOpen, setFsPickOpen] = useState(false)
   const [info, setInfo] = useState('')
 
-  useEffect(() => { refresh(); refreshStatus(); getModels().then(setModels).catch(() => {}) }, [])
-  useEffect(() => { const t = setInterval(refreshStatus, 3000); return () => clearInterval(t) }, [])
+  useEffect(() => { refresh(); refreshStatus(); getModels().then(setModels).catch(() => {}); refreshTerminals() }, [])
+  useEffect(() => { const t = setInterval(refreshStatus, 3000); const t2 = setInterval(refreshTerminals, 5000); return () => { clearInterval(t); clearInterval(t2) } }, [])
   // 切换 skill 时拉取 env 配置（执行目录等）
   useEffect(() => {
     getEnv(skill).then(j => { if (j.ok) setCwd(j.cwd || '') }).catch(() => {})
@@ -71,6 +76,24 @@ export default function BatchEval() {
     if (j.ok) { setDkDevices(j.devices || []); setInfo(`获取到 ${(j.devices || []).length} 台设备`) }
     else setInfo(j.error || '拉取失败')
   }
+  function refreshTerminals() { listTerminals().then(setTerminals).catch(() => {}) }
+  async function doLaunchTerminal() {
+    setInfo('打开终端中…')
+    const j = await launchTerminal({
+      cwd, agent,
+      model: model ? (agent === 'codemaker' ? `netease-codemaker/${model}` : model) : undefined,
+      provider: (agent === 'claude' && model) ? 'codemaker_deepseek' : undefined,
+    })
+    setInfo(j.ok ? `已在「${j.cwd}」打开 ${agent} 终端（pid ${j.pid}）` : (j.error || '启动失败'))
+    refreshTerminals()
+  }
+  async function doStopTerminal(pid) { await stopTerminal(pid); refreshTerminals() }
+  async function navFs(path) {
+    setFsErr(''); setFs(null)
+    const j = await listFs(path)
+    if (!j.ok) { setFsErr(j.error || '无法访问'); return }
+    setCwd(j.path); setFs(j)
+  }
 
   const running = batchState.state === 'running'
 
@@ -93,8 +116,29 @@ export default function BatchEval() {
         <label style={{ width: 'auto' }}>执行目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
                placeholder="含 .mcp.json / .claude/skills" style={{ width: 300, flex: 'none' }} />
+        <button className="ghost" onClick={() => { setFsPickOpen(!fsPickOpen); if (!fs && !fsPickOpen) navFs(cwd) }}>浏览</button>
         <span className="muted" style={{ fontSize: 10 }}>MCP/skill 从该目录加载</span>
       </div>
+      {fsPickOpen && (
+        <div className="fs-picker" style={{ margin: '4px 0 10px 80px' }}>
+          <div className="fs-row">
+            <input value={cwd} onChange={e => setCwd(e.target.value)} onKeyDown={e => e.key === 'Enter' && navFs(cwd)} spellCheck={false} />
+            <button className="ghost" onClick={() => navFs(cwd)}>跳转</button>
+          </div>
+          <div className="fs-body">
+            {fs && (
+              <div className="fs-list fs-dirs" style={{ maxHeight: 180 }}>
+                {fs.parent != null && <div className="fs-item dir" onClick={() => navFs(fs.parent)}>..</div>}
+                {fs.dirs.map(d => (
+                  <div className="fs-item dir" key={d} onClick={() => navFs(cwd.replace(/[\\/]$/, '') + '\\' + d)}>▸ {d}</div>
+                ))}
+                {fs.dirs.length === 0 && fs.parent == null && <div className="muted empty">无子目录</div>}
+              </div>
+            )}
+          </div>
+          {fsErr && <div className="warn">{fsErr}</div>}
+        </div>
+      )}
       <div className="launcher-row">
         <label>Skill</label>
         <select value={skill} onChange={e => setSkill(e.target.value)}>
@@ -114,6 +158,7 @@ export default function BatchEval() {
           {running ? '评测中…' : '发起评测'}
         </button>
         <button className="ghost" onClick={doStop} disabled={!running}>停止</button>
+        <button className="ghost" onClick={doLaunchTerminal}>打开交互终端</button>
         <span className="muted" style={{ fontSize: 11 }}>
           {running ? `运行中：${batchState.total} 任务 × ${batchState.repeat} 次` : (batchState.state === 'done' ? '上次评测已完成' : '')}
         </span>
@@ -166,6 +211,25 @@ export default function BatchEval() {
           {!tasks.length && <tr><td className="empty" colSpan="7" style={{ padding: 12 }}>暂无任务——先「生成」或「新建」</td></tr>}
         </tbody>
       </table>
+
+      <div className="terminals" style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+        <div className="muted" style={{ fontSize: 11, cursor: 'pointer' }} onClick={() => setTermOpen(!termOpen)}>
+          {termOpen ? '▾' : '▸'} 已打开终端（{terminals.length}）
+        </div>
+        {termOpen && terminals.length > 0 && (
+          <div style={{ marginTop: 4 }}>
+            {terminals.map(t => (
+              <div key={t.pid} className="term-item">
+                <span className="mono" style={{ color: 'var(--green)' }}>●</span>
+                <span className="mono" style={{ fontSize: 11 }}>pid {t.pid}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink2)', flex: 1 }}>{t.cwd}</span>
+                <span className="muted" style={{ fontSize: 10 }}>{t.agent || 'claude'} · {t.provider || 'default'}</span>
+                <button className="ghost" onClick={() => doStopTerminal(t.pid)} title="结束终端">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {editing && <TaskEditor task={editing} setTask={setEditing} onSave={doSave} onCancel={() => setEditing(null)} />}
     </div>
