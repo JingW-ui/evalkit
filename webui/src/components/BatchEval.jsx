@@ -81,7 +81,7 @@ export default function BatchEval() {
         </div>
         <label style={{ width: 'auto' }}>执行目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
-               placeholder="含 .mcp.json / .claude/skills" style={{ width: 300 }} />
+               placeholder="含 .mcp.json / .claude/skills" style={{ width: 300, flex: 'none' }} />
         <span className="muted" style={{ fontSize: 10 }}>MCP/skill 从该目录加载</span>
       </div>
       <div className="launcher-row">
@@ -112,7 +112,7 @@ export default function BatchEval() {
       <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
         <label>DK 配置</label>
         <input type="password" value={dkToken} onChange={e => setDkToken(e.target.value)} placeholder="token（留空自动读）" style={{ width: 150 }} />
-        <input value={dkGroup} onChange={e => setDkGroup(e.target.value)} title="dk_group" style={{ width: 48 }} />
+        <input value={dkGroup} onChange={e => setDkGroup(e.target.value)} title="dk_group" style={{ width: 48, flex: 'none' }} />
         <select value={device} onChange={e => setDevice(e.target.value)} style={{ flex: 1 }}>
           <option value="">（不指定设备）</option>
           {dkDevices.map(d => {
