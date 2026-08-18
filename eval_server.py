@@ -236,6 +236,8 @@ class EvalServer:
         self._job: threading.Thread | None = None
         self._cancel: threading.Event | None = None
         self._current: dict = {"state": "idle"}
+        self._batch_cancel: threading.Event | None = None
+        self._batch_state: dict = {"state": "idle"}
         self._eval_runs: dict = {}          # session_id -> info（运行中 eval 发起）
         self._tails = JsonlTails(on_events=self._on_tail_events)
         self._cm_tails = CodemakerTails(on_events=self._on_tail_events)
@@ -838,6 +840,100 @@ class EvalServer:
             return {"ok": True, "message": "取消请求已发送"}
         return {"ok": False, "message": "没有运行中的任务"}
 
+    # ---- 任务定义 + 批量评测（前端批量评测入口） ----
+
+    def list_tasks(self) -> dict:
+        return {"tasks": self._records.list_tasks()}
+
+    def save_task(self, task: dict) -> dict:
+        if not task.get("task_id"):
+            return {"ok": False, "error": "缺少 task_id"}
+        self._records.upsert_task(task)
+        return {"ok": True, "task": self._records.get_task(task["task_id"])}
+
+    def remove_task(self, task_id: str) -> dict:
+        return {"ok": True} if self._records.delete_task(task_id) \
+            else {"ok": False, "error": "任务不存在"}
+
+    def gen_tasks(self, params: dict) -> dict:
+        domains = [d.strip() for d in (params.get("domain") or "").split(",") if d.strip()]
+        if not domains:
+            return {"ok": False, "error": "缺少 domain"}
+        tasks = self._records.generate_tasks(domains, params.get("params"),
+                                             int(params.get("count") or 1))
+        return {"ok": True, "generated": len(tasks), "tasks": tasks}
+
+    def start_batch(self, params: dict) -> dict:
+        """发起批量评测：后台线程跑 run_batch，SSE 发布 batch-progress。"""
+        agent = params.get("agent") or "claude"
+        skill = params.get("skill")
+        repeat = int(params.get("repeat") or 1)
+        permission_mode = params.get("permission_mode")
+        model = params.get("model")
+        tasks = self._records.list_tasks()
+        if skill:
+            tasks = [t for t in tasks if t.get("skill_expected") == skill]
+        task_ids = params.get("task_ids")
+        if task_ids:
+            tasks = [t for t in tasks if t.get("task_id") in task_ids]
+        if not tasks:
+            return {"ok": False, "error": "无任务——先在前端定义或生成任务"}
+        env = {}
+        if skill:
+            try:
+                from eval_batch import load_env
+                env = load_env(skill)
+            except Exception:
+                env = {}
+        cwd = params.get("cwd") or env.get("cwd")
+        device = env.get("device")
+        if device:
+            for t in tasks:
+                t["query"] = t.get("query", "").replace("{device}", device)
+        cancel = threading.Event()
+        with self._lock:
+            self._batch_cancel = cancel
+            self._batch_state = {"state": "running", "agent": agent,
+                                 "repeat": repeat, "total": len(tasks)}
+        session_root = self.batch_root or "results/batch"
+
+        def _job():
+            try:
+                from eval_batch import run_batch
+
+                def on_task(task, result, verdict, run_idx):
+                    self.hub.publish({
+                        "type": "batch-progress",
+                        "session_id": (result or {}).get("session_id", ""),
+                        "task_id": task.get("task_id"), "run_idx": run_idx,
+                        "verdict": verdict,
+                    })
+                run_batch(tasks, backend=agent,
+                          timeout_s=int(params.get("timeout") or 600),
+                          permission_mode=permission_mode, model=model,
+                          session_root=session_root, cwd=cwd,
+                          provider=params.get("provider"), repeat=repeat,
+                          on_task=on_task)
+            except Exception as exc:
+                self.hub.publish({"type": "error", "message": f"批量评测失败: {exc}"})
+            finally:
+                with self._lock:
+                    self._batch_state = {"state": "done"}
+
+        threading.Thread(target=_job, daemon=True).start()
+        return {"ok": True, "total": len(tasks), "repeat": repeat, "agent": agent}
+
+    def stop_batch(self) -> dict:
+        with self._lock:
+            c = self._batch_cancel
+        if c is not None and not c.is_set():
+            c.set()
+            return {"ok": True, "message": "批量评测停止请求已发送"}
+        return {"ok": False, "message": "没有运行中的批量评测"}
+
+    def batch_status(self) -> dict:
+        return self._batch_state
+
     def launch_terminal(self, params: dict) -> dict:
         """在指定目录以 provider 配置打开交互式 claude 对话终端（新控制台窗口，agent 本身）。
 
@@ -1107,6 +1203,10 @@ class Handler(BaseHTTPRequestHandler):
             if task_id:
                 recs = [r for r in recs if r.get("task_id") == task_id]
             self._send_json({"executions": recs})
+        elif self.path == "/api/tasks":
+            self._send_json(self.server.eval.list_tasks())
+        elif self.path == "/api/batch/status":
+            self._send_json(self.server.eval.batch_status())
         elif self.path == "/api/providers":
             try:
                 from provider import list_providers
@@ -1224,6 +1324,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self.server.eval.rename_session(body.get("session_id", ""), body.get("name", "")))
         elif self.path == "/api/sessions/remove":
             self._send_json(self.server.eval.remove_session(body.get("session_id", "")))
+        elif self.path == "/api/tasks":
+            self._send_json(self.server.eval.save_task(body))
+        elif self.path == "/api/tasks/generate":
+            self._send_json(self.server.eval.gen_tasks(body))
+        elif self.path == "/api/batch/start":
+            self._send_json(self.server.eval.start_batch(body))
+        elif self.path == "/api/batch/stop":
+            self._send_json(self.server.eval.stop_batch())
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -1245,6 +1353,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "session not found"}, 404)
             else:
                 self._send_json({"ok": True, "execution": r})
+        else:
+            self._send_json({"error": "not found"}, 404)
+
+    # ---- DELETE（删除任务） ----
+
+    def do_DELETE(self):
+        parts = self.path.rstrip("/").split("/")
+        if len(parts) >= 4 and parts[1] == "api" and parts[2] == "tasks":
+            self._send_json(self.server.eval.remove_task(parts[3]))
         else:
             self._send_json({"error": "not found"}, 404)
 

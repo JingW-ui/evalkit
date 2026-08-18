@@ -51,6 +51,17 @@ CREATE TABLE IF NOT EXISTS executions (
 );
 CREATE INDEX IF NOT EXISTS idx_exec_agent_level ON executions(agent, level);
 CREATE INDEX IF NOT EXISTS idx_exec_task ON executions(task_id, run_idx);
+CREATE TABLE IF NOT EXISTS tasks (
+    task_id TEXT PRIMARY KEY,
+    level TEXT,
+    skill_expected TEXT,
+    query TEXT,
+    repeat INTEGER DEFAULT 1,
+    success_condition TEXT,
+    note TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
 """
 
 _FIELDS = [
@@ -248,6 +259,68 @@ class EvalStore:
         if out.get("success") is not None:
             out["success"] = bool(out["success"])
         return out
+
+    # ---- 任务定义（tasks 表） ----
+
+    _TASK_FIELDS = ["task_id", "level", "skill_expected", "query", "repeat",
+                    "success_condition", "note", "created_at", "updated_at"]
+
+    def list_tasks(self) -> list:
+        """列任务定义（success_condition 还原为 dict）。"""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM tasks ORDER BY task_id").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["success_condition"] = json.loads(d["success_condition"])
+            except Exception:
+                d["success_condition"] = {}
+            out.append(d)
+        return out
+
+    def get_task(self, task_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["success_condition"] = json.loads(d["success_condition"])
+        except Exception:
+            d["success_condition"] = {}
+        return d
+
+    def upsert_task(self, task: dict) -> dict:
+        """创建/更新任务（task_id 主键），success_condition 序列化为 JSON 串。"""
+        t = dict(task)
+        if isinstance(t.get("success_condition"), dict):
+            t["success_condition"] = json.dumps(t["success_condition"], ensure_ascii=False)
+        now = int(time.time() * 1000)
+        t["updated_at"] = now
+        if t.get("created_at") is None:
+            t["created_at"] = now
+        cols = ", ".join(self._TASK_FIELDS)
+        ph = ", ".join("?" for _ in self._TASK_FIELDS)
+        sql = f"INSERT OR REPLACE INTO tasks ({cols}) VALUES ({ph})"
+        with self._lock:
+            self._conn.execute(sql, [t.get(f) for f in self._TASK_FIELDS])
+            self._conn.commit()
+        return t
+
+    def delete_task(self, task_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM tasks WHERE task_id=?", (task_id,))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def generate_tasks(self, domains: list, params: dict = None, count: int = 1) -> list:
+        """按 skill(域) 生成 L1-L4 任务并写入 tasks 表，返回生成的任务列表。"""
+        from task_gen import build_tasks
+        tasks = build_tasks(domains, params or {}, count)
+        for t in tasks:
+            self.upsert_task(t)
+        return tasks
 
 
 def migrate_json_to_db(json_path=None, db_path=None) -> int:

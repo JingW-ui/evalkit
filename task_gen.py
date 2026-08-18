@@ -220,21 +220,10 @@ def preview_templates() -> str:
     return "\n".join(lines)
 
 
-def generate_tasks(domains: list[str], params: dict, out_dir: str | Path,
-                   count: int = 1, prefix: str = "") -> list[Path]:
-    """按域/级别生成任务文件，返回写出的路径列表。
-
-    Args:
-        domains: 域列表（g66/uu_remote/airgattai/generic）。
-        params: 参数覆盖（合并默认值）。
-        out_dir: 输出目录。
-        count: 每个模板生成的变体数（同参数，序号递增——用于多次运行取样）。
-        prefix: 任务 id 前缀（缺省 = 域）。
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def build_tasks(domains: list[str], params: dict, count: int = 1, prefix: str = "") -> list[dict]:
+    """按域/级别生成任务 dict 列表（不写文件，供写文件/SQLite 复用）。"""
     merged = {**DEFAULT_PARAMS, **params}
-    written: list[Path] = []
+    tasks: list[dict] = []
     seq = 0
     for domain in domains:
         d = TEMPLATES.get(domain)
@@ -246,19 +235,29 @@ def generate_tasks(domains: list[str], params: dict, out_dir: str | Path,
                 for variant in range(count):
                     seq += 1
                     tid = f"{prefix or domain}_{level}_{seq:03d}"
-                    query = _format_query(t["query"], merged)
-                    task = {
+                    tasks.append({
                         "task_id": tid,
                         "level": level,
                         "skill_expected": domain,
-                        "query": query,
+                        "query": _format_query(t["query"], merged),
                         "success_condition": _format_condition(t["condition"], merged),
                         "note": (t.get("note") or "") + f"（{domain} 模板变体 {variant + 1}/{count}）",
-                    }
-                    path = out_dir / f"{tid}.json"
-                    with open(path, "w", encoding="utf-8") as f:
-                        json.dump(task, f, ensure_ascii=False, indent=2)
-                    written.append(path)
+                        "repeat": None,   # 未设置 → 用批次级 repeat
+                    })
+    return tasks
+
+
+def generate_tasks(domains: list[str], params: dict, out_dir: str | Path,
+                   count: int = 1, prefix: str = "") -> list[Path]:
+    """按域/级别生成任务文件，返回写出的路径列表。"""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for task in build_tasks(domains, params, count, prefix):
+        path = out_dir / f"{task['task_id']}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False, indent=2)
+        written.append(path)
     return written
 
 

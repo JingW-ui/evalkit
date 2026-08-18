@@ -7,6 +7,7 @@ import TrajectoryView from './components/TrajectoryView.jsx'
 import RawLog from './components/RawLog.jsx'
 import EvalMatrix from './components/EvalMatrix.jsx'
 import StatsPanel from './components/StatsPanel.jsx'
+import BatchEval from './components/BatchEval.jsx'
 import Inspector from './components/Inspector.jsx'
 import BatchLauncher from './components/BatchLauncher.jsx'
 import { buildReportHtml } from './exportHtml.js'
@@ -241,11 +242,14 @@ export default function App() {
             // 已在新窗口打开 claude 对话终端：刷新会话列表（新会话日志会自动被发现）
             refresh()
           }} current={spinning} />
-        ) : !cur ? (
-          <div className="emptyview">{viewMode === 'batch'
-            ? '批量评测会话（task_gen 生成 → agent 执行 → 判级入矩阵）。用 eval_batch.py 触发，或从左侧选择会话查看'
-            : '从左侧选择一个会话，查看评测报告与轨迹'}</div>
         ) : (
+          <>
+            {viewMode === 'batch' && <BatchEval />}
+            {!cur ? (
+              <div className="emptyview">{viewMode === 'batch'
+                ? '从左侧选择批量评测会话查看单次报告'
+                : '从左侧选择一个会话，查看评测报告与轨迹'}</div>
+            ) : (
           <div className="wrap">
             {/* 顶部：精简 hero + 高密度统计条 */}
             <div className="hero">
@@ -299,6 +303,8 @@ export default function App() {
               </div>
             )}
           </div>
+            )}
+          </>
         )}
       </main>
       {/* 全局详情面板（右侧圆角悬浮，轨迹/任务工具链触发） */}

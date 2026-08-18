@@ -138,6 +138,48 @@ export async function reviewExecution(sessionId, patch) {
   return r.json()
 }
 
+export async function getTasks() {
+  const r = await fetch(`${BASE}/api/tasks`)
+  const j = await r.json()
+  return j.tasks || []
+}
+
+export async function saveTask(task) {
+  const r = await fetch(`${BASE}/api/tasks`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(task),
+  })
+  return r.json()
+}
+
+export async function deleteTask(taskId) {
+  const r = await fetch(`${BASE}/api/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' })
+  return r.json()
+}
+
+export async function generateTasks(params) {
+  const r = await fetch(`${BASE}/api/tasks/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+  })
+  return r.json()
+}
+
+export async function startBatch(params) {
+  const r = await fetch(`${BASE}/api/batch/start`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+  })
+  return r.json()
+}
+
+export async function stopBatch() {
+  const r = await fetch(`${BASE}/api/batch/stop`, { method: 'POST' })
+  return r.json()
+}
+
+export async function getBatchStatus() {
+  const r = await fetch(`${BASE}/api/batch/status`)
+  return r.json()
+}
+
 export function connectSSE(onFrame, onStatus) {
   const es = new EventSource(`${BASE}/events`)
   es.onopen = () => onStatus && onStatus('connected')

@@ -117,9 +117,9 @@ button.ghost.active { color: var(--blue); border-color: var(--blue); }
 .launcher h2 { font-size: 13px; margin-bottom: 12px; color: var(--ink); }
 .launcher-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .launcher-row label { flex: none; width: 72px; font-size: 11px; color: var(--ink3); }
-.launcher-row select, .launcher-row input { background: var(--bg); border: 1px solid var(--border2);
+.launcher-row select, .launcher-row input, .launcher-row textarea { background: var(--bg); border: 1px solid var(--border2);
   color: var(--ink); font-size: 12px; padding: 4px 7px; border-radius: 6px; font-family: var(--mono); }
-.launcher-row select:focus, .launcher-row input:focus { outline: 1px solid var(--blue); }
+.launcher-row select:focus, .launcher-row input:focus, .launcher-row textarea:focus { outline: 1px solid var(--blue); }
 .launcher-row input[type=text], .launcher-row input:not([type]) { flex: 1; }
 .launcher-preview { font-size: 10px; color: var(--ink3); max-width: 340px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
@@ -134,6 +134,9 @@ button.ghost.active { color: var(--blue); border-color: var(--blue); }
 .review-inline select, .review-inline input { background: var(--bg); border: 1px solid var(--border2);
   color: var(--ink); font-size: 11px; padding: 2px 5px; border-radius: 4px; font-family: var(--mono); }
 .review-inline input { width: 90px; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal-body { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; width: 580px; max-width: 92vw; max-height: 86vh; overflow: auto; }
+.modal-body h3 { font-size: 13px; margin-bottom: 10px; color: var(--ink); }
 .term-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
   border: 1px solid var(--border2); border-radius: 6px; margin-bottom: 4px; background: var(--bg); }
 .term-item .ghost { color: var(--ink3); }
