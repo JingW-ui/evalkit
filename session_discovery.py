@@ -119,11 +119,12 @@ def discover_claude_projects(projects_dir: str | Path | None = None,
 
 # ---------- 来源 2：本评测落盘 session_root ----------
 
-def discover_session_root(root: str | Path | None) -> list[SessionInfo]:
+def discover_session_root(root: str | Path | None, source: str = "session_root") -> list[SessionInfo]:
     """扫描本评测落盘目录 root/*/{session.jsonl,raw.jsonl}。
 
     - 有 raw.jsonl（stream-json 原始行）→ claude 来源
     - 仅有 session.jsonl（DSH 格式统一事件）→ dsh 来源
+    source: SessionInfo.source 标签（session_root / batch）
     """
     if not root:
         return []
@@ -141,7 +142,7 @@ def discover_session_root(root: str | Path | None) -> list[SessionInfo]:
         # raw.jsonl 是 stream-json 原始行，与 claude_jsonl_to_events（Claude Code JSONL）口径不同，仅兜底。
         if log.is_file():
             out.append(SessionInfo(
-                session_id=sid, agent="claude", state="history", source="session_root",
+                session_id=sid, agent="claude", state="history", source=source,
                 path=str(log),
                 query=_session_query_from_log(log),
                 updated_at=_mtime_ms(log), size=log.stat().st_size,
@@ -149,7 +150,7 @@ def discover_session_root(root: str | Path | None) -> list[SessionInfo]:
             ))
         elif raw.is_file():
             out.append(SessionInfo(
-                session_id=sid, agent="claude", state="history", source="session_root",
+                session_id=sid, agent="claude", state="history", source=source,
                 path=str(raw),
                 query=_session_query_from_log(log) or _first_user_query(raw),
                 updated_at=_mtime_ms(raw), size=raw.stat().st_size,
@@ -385,7 +386,7 @@ def discover_all(projects_dir: str | Path | None = None,
         sessions += discover_session_root(session_root)
 
     # 批量评测落盘（results/batch）也并入会话评测列表（独立于 samples_dir 限制）
-    sessions += discover_session_root(batch_root)
+    sessions += discover_session_root(batch_root, source="batch")
 
     # 真实 Claude Code projects 始终并入（独立于 samples_dir 限制——samples 只是示例，
     # 用户本机全部真实会话日志都要进评测系统）
