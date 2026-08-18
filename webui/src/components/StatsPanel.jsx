@@ -37,7 +37,14 @@ export default function StatsPanel() {
   return (
     <div className="panel">
       <h2>统计总览 · {rows.length} 个任务 <button className="ghost" onClick={refresh} style={{ float: 'right' }}>↻</button></h2>
-      <table>
+      <table style={{ tableLayout: 'fixed' }}>
+        <colgroup>
+          <col style={{ width: '18%' }} /><col style={{ width: '8%' }} />
+          <col style={{ width: '5%' }} /><col style={{ width: '5%' }} />
+          <col style={{ width: '10%' }} /><col style={{ width: '12%' }} />
+          <col style={{ width: '14%' }} /><col style={{ width: '11%' }} />
+          <col style={{ width: '9%' }} /><col style={{ width: '8%' }} />
+        </colgroup>
         <thead><tr>
           <th>任务</th><th>skill</th><th>L</th><th className="num">n</th>
           <th className="num">成功率</th><th className="num">耗时(均值±σ)</th>
@@ -48,7 +55,7 @@ export default function StatsPanel() {
           {rows.map(r => (
             <React.Fragment key={r.task_id}>
               <tr onClick={() => toggle(r.task_id)} style={{ cursor: 'pointer' }}>
-                <td className="tq" title={r.task_id}>{esc(r.task_id || '')}</td>
+                <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.task_id}>{esc(r.task_id || '')}</td>
                 <td>{esc(r.skill_expected || '—')}</td>
                 <td><span className="badge" style={{ background: (LEVEL_COLOR[r.level] || '#6e7681') + '33', color: LEVEL_COLOR[r.level] || '#6e7681' }}>{r.level || '?'}</span></td>
                 <td className="num">{r.n}</td>
@@ -71,7 +78,6 @@ export default function StatsPanel() {
           {!rows.length && <tr><td className="empty" colSpan="10" style={{ padding: 12 }}>暂无统计——先跑批量评测（repeat≥1）</td></tr>}
         </tbody>
       </table>
-      <div className="muted" style={{ fontSize: 10, marginTop: 6 }}>耗时/成本/工具成功率/工具次数为「均值 ± 样本标准差 σ」；成功率不统计方差</div>
     </div>
   )
 }
