@@ -130,6 +130,10 @@ button.ghost.active { color: var(--blue); border-color: var(--blue); }
   border-radius: 6px; cursor: pointer; font-size: 12px; }
 .launcher-actions .primary:disabled { opacity: .5; cursor: default; }
 .info { color: var(--blue); font-size: 11px; font-family: var(--mono); padding: 1px 0; }
+.review-inline { display: flex; align-items: center; gap: 4px; }
+.review-inline select, .review-inline input { background: var(--bg); border: 1px solid var(--border2);
+  color: var(--ink); font-size: 11px; padding: 2px 5px; border-radius: 4px; font-family: var(--mono); }
+.review-inline input { width: 90px; }
 .term-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
   border: 1px solid var(--border2); border-radius: 6px; margin-bottom: 4px; background: var(--bg); }
 .term-item .ghost { color: var(--ink3); }

@@ -6,6 +6,7 @@ import TasksPanel from './components/TasksPanel.jsx'
 import TrajectoryView from './components/TrajectoryView.jsx'
 import RawLog from './components/RawLog.jsx'
 import EvalMatrix from './components/EvalMatrix.jsx'
+import StatsPanel from './components/StatsPanel.jsx'
 import Inspector from './components/Inspector.jsx'
 import BatchLauncher from './components/BatchLauncher.jsx'
 import { buildReportHtml } from './exportHtml.js'
@@ -220,6 +221,7 @@ export default function App() {
             <button className={`mode ${viewMode === 'batch' ? 'active' : ''}`} onClick={() => setViewMode('batch')}>批量评测</button>
             <button className={`mode ${viewMode === 'launch' ? 'active' : ''}`} onClick={() => setViewMode('launch')}>拉起会话</button>
             <button className={`mode ${viewMode === 'matrix' ? 'active' : ''}`} onClick={() => setViewMode('matrix')}>评测矩阵</button>
+            <button className={`mode ${viewMode === 'stats' ? 'active' : ''}`} onClick={() => setViewMode('stats')}>统计总览</button>
           </span>
           {cur && (
             <span className="cur mono">
@@ -230,7 +232,9 @@ export default function App() {
           )}
         </header>
 
-        {viewMode === 'matrix' ? (
+        {viewMode === 'stats' ? (
+          <StatsPanel />
+        ) : viewMode === 'matrix' ? (
           <EvalMatrix />
         ) : viewMode === 'launch' ? (
           <BatchLauncher onStarted={t => {

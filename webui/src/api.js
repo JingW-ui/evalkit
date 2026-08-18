@@ -117,6 +117,27 @@ export async function listFs(path) {
   return r.json()
 }
 
+export async function getStats() {
+  const r = await fetch(`${BASE}/api/stats`)
+  const j = await r.json()
+  return j.rows || []
+}
+
+export async function getExecutions(taskId) {
+  const r = await fetch(`${BASE}/api/executions?task_id=${encodeURIComponent(taskId || '')}`)
+  const j = await r.json()
+  return j.executions || []
+}
+
+export async function reviewExecution(sessionId, patch) {
+  const r = await fetch(`${BASE}/api/executions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  return r.json()
+}
+
 export function connectSSE(onFrame, onStatus) {
   const es = new EventSource(`${BASE}/events`)
   es.onopen = () => onStatus && onStatus('connected')

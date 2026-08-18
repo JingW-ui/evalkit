@@ -13,6 +13,7 @@ eval_store.py — SQLite 评测记录存储（M1：替换 results/eval_records.j
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 _DEFAULT_DB = Path(__file__).parent / "results" / "eval_records.db"
@@ -31,8 +32,13 @@ CREATE TABLE IF NOT EXISTS executions (
     success INTEGER,
     success_by TEXT,
     tool_calls_total INTEGER,
+    tool_success INTEGER,
+    tool_fail INTEGER,
     input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_read_tokens INTEGER,
     cost_cny REAL,
+    duration_ms INTEGER,
     human_interventions INTEGER,
     turn_end_reason TEXT,
     query TEXT,
@@ -44,14 +50,16 @@ CREATE TABLE IF NOT EXISTS executions (
     _at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_exec_agent_level ON executions(agent, level);
+CREATE INDEX IF NOT EXISTS idx_exec_task ON executions(task_id, run_idx);
 """
 
 _FIELDS = [
     "session_id", "run_id", "task_id", "run_idx", "agent", "skill_expected",
     "level", "level_source", "level_reason", "success", "success_by",
-    "tool_calls_total", "input_tokens", "cost_cny", "human_interventions",
-    "turn_end_reason", "query", "level_auto", "success_auto",
-    "review_status", "review_note", "reviewed_at", "_at",
+    "tool_calls_total", "tool_success", "tool_fail", "input_tokens",
+    "output_tokens", "cache_read_tokens", "cost_cny", "duration_ms",
+    "human_interventions", "turn_end_reason", "query", "level_auto",
+    "success_auto", "review_status", "review_note", "reviewed_at", "_at",
 ]
 
 
@@ -65,7 +73,20 @@ class EvalStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._lock = threading.Lock()
+
+    def _migrate(self) -> None:
+        """老库补列（幂等）：executions 缺的统计列 ALTER TABLE ADD COLUMN。"""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(executions)")}
+        for col, typ in {
+            "tool_success": "INTEGER", "tool_fail": "INTEGER",
+            "output_tokens": "INTEGER", "cache_read_tokens": "INTEGER",
+            "duration_ms": "INTEGER",
+        }.items():
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE executions ADD COLUMN {col} {typ}")
+        self._conn.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -124,6 +145,109 @@ class EvalStore:
                 "avg_interventions": round(c["human_interventions"] / c["count"], 2) if c["count"] else 0,
             })
         return {"portrait": portrait, "records": recs}
+
+    @staticmethod
+    def _mean_sd(values) -> tuple:
+        """均值 + 样本标准差（n<2 时 sd=None；忽略 None）。"""
+        xs = [v for v in values if v is not None]
+        n = len(xs)
+        if n == 0:
+            return None, None
+        mean = sum(xs) / n
+        if n < 2:
+            return mean, None
+        var = sum((x - mean) ** 2 for x in xs) / (n - 1)
+        return mean, var ** 0.5
+
+    def stats(self) -> dict:
+        """统计总览：按 task 聚合 n 次执行，SR + 均值±σ（样本标准差）。
+
+        返回 {"rows": [...]}，每行含 task_id/skill_expected/level/agent + n/success/sr +
+        duration_ms/duration_sd + cost_cny/cost_sd/cost_sum + tool_sr/tool_sr_sd +
+        tool_calls/tool_calls_sd + input_tokens/input_sd + human_interventions。
+        """
+        recs = self.all()
+        groups = {}
+        for r in recs:
+            key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"))
+            groups.setdefault(key, []).append(r)
+        rows = []
+        for key, rs in sorted(groups.items()):
+            task_id, skill, level, agent = key
+            n = len(rs)
+            success = sum(1 for r in rs if r.get("success"))
+            tool_srs = []
+            for r in rs:
+                s = r.get("tool_success") or 0
+                f = r.get("tool_fail") or 0
+                if s + f > 0:
+                    tool_srs.append(s / (s + f))
+            tool_sr, tool_sr_sd = self._mean_sd(tool_srs)
+            dur, dur_sd = self._mean_sd([r.get("duration_ms") for r in rs])
+            cost, cost_sd = self._mean_sd([r.get("cost_cny") for r in rs])
+            tools, tools_sd = self._mean_sd([r.get("tool_calls_total") for r in rs])
+            tin, tin_sd = self._mean_sd([r.get("input_tokens") for r in rs])
+            inter, _ = self._mean_sd([r.get("human_interventions") for r in rs])
+            rows.append({
+                "task_id": task_id, "skill_expected": skill, "level": level, "agent": agent,
+                "n": n, "success": success,
+                "sr": round(success / n, 3) if n else None,
+                "duration_ms": round(dur, 1) if dur is not None else None,
+                "duration_sd": round(dur_sd, 1) if dur_sd is not None else None,
+                "cost_cny": round(cost, 4) if cost is not None else None,
+                "cost_sd": round(cost_sd, 4) if cost_sd is not None else None,
+                "cost_sum": round(sum(r.get("cost_cny") or 0 for r in rs), 4),
+                "tool_sr": round(tool_sr, 3) if tool_sr is not None else None,
+                "tool_sr_sd": round(tool_sr_sd, 3) if tool_sr_sd is not None else None,
+                "tool_calls": round(tools, 1) if tools is not None else None,
+                "tool_calls_sd": round(tools_sd, 1) if tools_sd is not None else None,
+                "input_tokens": round(tin) if tin is not None else None,
+                "input_sd": round(tin_sd) if tin_sd is not None else None,
+                "human_interventions": round(inter, 2) if inter is not None else None,
+            })
+        return {"rows": rows}
+
+    def review(self, session_id: str, level=None, success=None, note=None, reset=False) -> dict | None:
+        """人工复核：修正 level/success（保留自动值，留痕）。reset=True 重置为自动值。
+
+        返回更新后的记录；session 不存在返回 None。
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM executions WHERE session_id=?", (session_id,)).fetchone()
+            if row is None:
+                return None
+            d = dict(row)
+            if reset:
+                d["level"] = d.get("level_auto")
+                d["success"] = d.get("success_auto")
+                d["review_status"] = "unreviewed"
+            else:
+                changed = False
+                if level is not None:
+                    if d.get("level_auto") is None:
+                        d["level_auto"] = d.get("level")
+                    d["level"] = level
+                    changed = True
+                if success is not None:
+                    if d.get("success_auto") is None:
+                        d["success_auto"] = d.get("success")
+                    d["success"] = 1 if success else 0
+                    changed = True
+                d["review_status"] = "corrected" if changed else "reviewed"
+            if note is not None:
+                d["review_note"] = note
+            d["reviewed_at"] = int(time.time() * 1000)
+            # 直接写入（不调 self.upsert，避免同线程嵌套 acquire 非重入锁死锁）
+            cols = ", ".join(_FIELDS)
+            placeholders = ", ".join("?" for _ in _FIELDS)
+            sql = f"INSERT OR REPLACE INTO executions ({cols}) VALUES ({placeholders})"
+            self._conn.execute(sql, [d.get(f) for f in _FIELDS])
+            self._conn.commit()
+        out = {k: d.get(k) for k in _FIELDS}
+        if out.get("success") is not None:
+            out["success"] = bool(out["success"])
+        return out
 
 
 def migrate_json_to_db(json_path=None, db_path=None) -> int:

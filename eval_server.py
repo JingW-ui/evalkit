@@ -1097,6 +1097,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"sessions": self.server.eval.list_sessions(scope=scope)})
         elif self.path == "/api/eval-matrix":
             self._send_json(self.server.eval._records.matrix())
+        elif self.path == "/api/stats":
+            self._send_json(self.server.eval._records.stats())
+        elif self.path.startswith("/api/executions"):
+            import urllib.parse
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            task_id = qs.get("task_id", [None])[0]
+            recs = self.server.eval._records.all()
+            if task_id:
+                recs = [r for r in recs if r.get("task_id") == task_id]
+            self._send_json({"executions": recs})
         elif self.path == "/api/providers":
             try:
                 from provider import list_providers
@@ -1214,6 +1224,27 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self.server.eval.rename_session(body.get("session_id", ""), body.get("name", "")))
         elif self.path == "/api/sessions/remove":
             self._send_json(self.server.eval.remove_session(body.get("session_id", "")))
+        else:
+            self._send_json({"error": "not found"}, 404)
+
+    # ---- PATCH（人工复核：修正 level/success） ----
+
+    def do_PATCH(self):
+        body = self._read_body()
+        parts = self.path.rstrip("/").split("/")
+        if len(parts) >= 4 and parts[1] == "api" and parts[2] == "executions":
+            sid = parts[3]
+            r = self.server.eval._records.review(
+                sid,
+                level=body.get("level"),
+                success=body.get("success"),
+                note=body.get("note"),
+                reset=bool(body.get("reset", False)),
+            )
+            if r is None:
+                self._send_json({"error": "session not found"}, 404)
+            else:
+                self._send_json({"ok": True, "execution": r})
         else:
             self._send_json({"error": "not found"}, 404)
 
