@@ -901,7 +901,17 @@ class EvalServer:
                 sn = d.get("serialno")
                 label = ((d.get("device_info") or {}).get("name")
                          or d.get("alias") or d.get("model", "")) or sn
-                devices.append({"serialno": sn, "label": label})
+                devices.append({
+                    "serialno": sn, "label": label,
+                    "online": bool(d.get("online", False)),
+                    "occupied": bool(d.get("occupied", False)),
+                    "occupy_username": d.get("occupy_username"),
+                })
+            # 排序：空闲优先 → 在线占用 → 离线
+            def _sort_key(dv):
+                idle = 0 if (dv["online"] and not dv["occupied"]) else (1 if dv["online"] else 2)
+                return (idle, dv["label"] or "")
+            devices.sort(key=_sort_key)
             return {"ok": True, "devices": devices, "group_id": int(group_id)}
         except Exception as exc:
             return {"ok": False, "error": f"DK 拉取失败: {exc}"}

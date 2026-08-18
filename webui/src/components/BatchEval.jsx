@@ -113,23 +113,17 @@ export default function BatchEval() {
 
       <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
         <label>DK 配置</label>
-        <input type="password" value={dkToken} onChange={e => setDkToken(e.target.value)} placeholder="dk_token（留空自动读 config）" style={{ flex: 1 }} />
-        <label style={{ width: 'auto' }}>group</label>
-        <input value={dkGroup} onChange={e => setDkGroup(e.target.value)} style={{ width: 56 }} />
+        <input type="password" value={dkToken} onChange={e => setDkToken(e.target.value)} placeholder="token（留空自动读）" style={{ width: 150 }} />
+        <input value={dkGroup} onChange={e => setDkGroup(e.target.value)} title="dk_group" style={{ width: 48 }} />
+        <select value={device} onChange={e => setDevice(e.target.value)} style={{ flex: 1 }}>
+          <option value="">（不指定设备）</option>
+          {dkDevices.map(d => {
+            const st = d.online ? (d.occupied ? `占用${d.occupy_username ? '·' + d.occupy_username : ''}` : '空闲') : '离线'
+            return <option key={d.serialno} value={d.label}>{d.label} · {st}</option>
+          })}
+        </select>
         <button className="ghost" onClick={doFetchDk}>获取设备</button>
       </div>
-      {dkDevices.length > 0 && (
-        <div className="launcher-row">
-          <label>设备标签</label>
-          <select value={device} onChange={e => setDevice(e.target.value)}>
-            <option value="">（不指定）</option>
-            {dkDevices.map(d => (
-              <option key={d.serialno} value={d.label}>{d.label}</option>
-            ))}
-          </select>
-          <span className="muted" style={{ fontSize: 10 }}>{dkDevices.length} 台 · label 填充 {'{device}'}</span>
-        </div>
-      )}
 
       <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
         <label>生成任务</label>
