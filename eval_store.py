@@ -183,7 +183,7 @@ class EvalStore:
             key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"))
             groups.setdefault(key, []).append(r)
         rows = []
-        for key, rs in sorted(groups.items()):
+        for key, rs in sorted(groups.items(), key=lambda kv: tuple(str(x or "") for x in kv[0])):
             task_id, skill, level, agent = key
             n = len(rs)
             success = sum(1 for r in rs if r.get("success"))

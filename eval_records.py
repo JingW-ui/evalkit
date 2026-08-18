@@ -190,6 +190,29 @@ class EvalRecords:
         """能力画像（agent×L1-L4 SR + 平均指标）+ 明细列表。"""
         return self._store.matrix()
 
+    # ---- 转发到 EvalStore（M3 stats/review + M4 任务定义） ----
+
+    def stats(self) -> dict:
+        return self._store.stats()
+
+    def review(self, session_id, level=None, success=None, note=None, reset=False):
+        return self._store.review(session_id, level, success, note, reset)
+
+    def list_tasks(self) -> list:
+        return self._store.list_tasks()
+
+    def get_task(self, task_id):
+        return self._store.get_task(task_id)
+
+    def upsert_task(self, task) -> dict:
+        return self._store.upsert_task(task)
+
+    def delete_task(self, task_id) -> bool:
+        return self._store.delete_task(task_id)
+
+    def generate_tasks(self, domains, params=None, count=1) -> list:
+        return self._store.generate_tasks(domains, params, count)
+
     def close(self) -> None:
         """关闭底层 SQLite 连接（释放文件句柄，便于临时目录/服务退出清理）。"""
         self._store.close()
