@@ -21,7 +21,8 @@ import sys
 import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 from scanner import scan_all
 from cost import compute_cost
@@ -613,7 +614,7 @@ def main():
     args = ap.parse_args()
 
     task_files = []
-    tasks_dir = Path(__file__).parent / args.tasks
+    tasks_dir = _ROOT / args.tasks
     if tasks_dir.exists():
         for tf in tasks_dir.glob("*.json"):
             try:
@@ -637,7 +638,7 @@ def main():
     print("渲染 HTML...")
     html = render_html(data)
 
-    out = Path(__file__).parent / args.out
+    out = _ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     print(f"交互式报告已生成: {out}")

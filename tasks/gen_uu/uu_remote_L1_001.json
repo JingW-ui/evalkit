@@ -1,0 +1,15 @@
+{
+  "task_id": "uu_remote_L1_001",
+  "level": "L1",
+  "skill_expected": "uu_remote",
+  "query": "查一下 UU 远程（GameViewer）当前是否安装在我的电脑上",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "UU",
+      "GameViewer"
+    ],
+    "threshold": 1
+  },
+  "note": "L1 单一动作：环境探测（只读）（uu_remote 模板变体 1/1）"
+}

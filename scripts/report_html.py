@@ -263,7 +263,7 @@ def main():
 
     html = render_html(scan)
 
-    out = Path(__file__).parent / args.out
+    out = Path(__file__).resolve().parent.parent / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     print(f"HTML 报告已生成: {out}")

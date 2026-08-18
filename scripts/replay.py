@@ -18,14 +18,15 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-sys.path.insert(0, str(Path(__file__).parent))
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 from parser import replay_metrics
 
 
 def load_task(task_id: str, tasks_dir: str = "tasks") -> dict:
     """根据 task_id 从 tasks 目录加载 task schema。"""
-    base = Path(__file__).parent / tasks_dir
+    base = _ROOT / tasks_dir
     for tf in base.glob("*.json"):
         t = json.loads(tf.read_text(encoding="utf-8"))
         if t.get("task_id") == task_id:
@@ -111,7 +112,7 @@ def main():
     result = replay_metrics(jsonl_path, task)
 
     # 输出 JSON
-    out_dir = Path(__file__).parent / args.out_dir
+    out_dir = _ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     json_out = out_dir / f"replay_{result['task_id']}.json"
     json_out.write_text(to_json(result), encoding="utf-8")

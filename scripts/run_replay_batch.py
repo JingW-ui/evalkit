@@ -22,7 +22,8 @@ from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
-sys.path.insert(0, str(Path(__file__).parent))
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 from parser import replay_metrics, parse_session_jsonl
 
@@ -112,7 +113,7 @@ def main():
     args = parser.parse_args()
 
     # 加载 task
-    base = Path(__file__).parent
+    base = _ROOT
     task = None
     for tf in (base / "tasks").glob("*.json"):
         t = json.loads(tf.read_text(encoding="utf-8"))

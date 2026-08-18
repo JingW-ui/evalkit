@@ -28,25 +28,30 @@
 
 ```
 evalkit/
-├── replay.py            # 离线分析单条会话 → JSON + Markdown
-├── run_eval.py          # 驱动 Agent 跑评测（正向）
-├── run_replay_batch.py  # 批量离线分析多个会话
-├── dsh_backend.py       # DSH 实时评测后端（阶段 1，需 deepseek-harness SDK）
+├── eval_server.py       # 实时评测看板服务（HTTP + SSE + 会话发现/挂接/轨迹/矩阵）
 ├── claude_backend.py    # Claude Code 实时评测后端（通道 A：stream-json，零依赖）
-├── eval_server.py       # 实时评测看板服务（R3：React 前端 + 会话发现 + 挂接 + raw 浏览）
-├── session_discovery.py # 会话发现器（samples 目录 / 手动路径 / Claude projects / session_root）
+├── dsh_backend.py       # DSH 实时评测后端 + EventMetrics 指标折叠
+├── codemaker_backend.py # Codemaker 会话库通道（DB 适配 + 尾随）
 ├── tail_attach.py       # 外部 Claude 会话 JSONL 实时尾随挂接
-├── sessions/            # 受限会话样例目录（10 个：claude ×4 / dsh ×3 / airlab ×3）
+├── session_discovery.py # 会话发现器（Claude projects / codemaker / samples / session_root）
+├── agent_status.py      # agent 连接状态探测（online/idle/offline）
+├── provider.py          # 模型提供商配置（claude settings env+hooks 同构）
+├── eval_batch.py        # 批量评测闭环（gen → run → 判级 → 矩阵）
+├── task_gen.py          # L1-L4 任务模板生成
+├── eval_records.py      # 判级 + 评测记录 + 矩阵
+├── session_report.py    # airlab/dsh 日志解析 + 报告
+├── cost.py              # 成本估算
+├── parser.py / scanner.py / runner.py / report.py     # 离线分析核心
+├── adjudicator.py / classify_level.py / eval_store.py # 判定/分类/存储
+├── conf.json            # 配置（pricing / provider / aliases）
+├── scripts/             # 独立分析/重放/报告工具（python scripts/xxx.py）
+├── sessions/            # 受限会话样例目录（claude / dsh / airlab）
 ├── webui/               # React 前端（Vite 构建 → dist/，由 eval_server 服务）
 ├── web/evalboard.html   # 旧版原生单页看板（弃用中，可删除）
-├── parser.py            # 会话日志解析 + 校验器注册表
-├── report.py            # 聚合+报表
-├── runner.py            # 子进程驱动 Agent 执行
-├── conf.json            # 费率配置
+├── docx/                # 文档（开发说明 / 调研 / 日志）
 ├── tasks/               # 测试用例（L1-L4 分级 + skill_expected）
 ├── results/             # 输出（git 忽略）
-├── docs/                # 调研文档（dsh-integration-research.md / claude-backend-research.md）
-├── tests/               # 回归测试（scan_dsh_log / dsh_backend / claude_backend / eval_server）
+├── tests/               # 回归测试（10 套件）
 ├── sandbox/             # 运行沙盒（git 忽略）
 └── ROADMAP.md           # 后续开发计划
 ```
@@ -56,7 +61,7 @@ evalkit/
 ### 离线分析一条已存在的会话日志
 
 ```bash
-python replay.py --jsonl "<会话日志路径>" --task g66_L3_001
+python scripts/replay.py --jsonl "<会话日志路径>" --task g66_L3_001
 ```
 
 产出：
@@ -66,7 +71,7 @@ python replay.py --jsonl "<会话日志路径>" --task g66_L3_001
 ### 批量分析
 
 ```bash
-python run_replay_batch.py --scan --skill G66 --task g66_L3_001
+python scripts/run_replay_batch.py --scan --skill G66 --task g66_L3_001
 ```
 
 ## 任务分级（L1-L4）

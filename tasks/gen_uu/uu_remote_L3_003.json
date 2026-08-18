@@ -1,0 +1,15 @@
+{
+  "task_id": "uu_remote_L3_003",
+  "level": "L3",
+  "skill_expected": "uu_remote",
+  "query": "在设备 {device} 上配置 UU 远程的取号验证码 163a163a 并写入 DK 备注",
+  "success_condition": {
+    "type": "evidence_anchor",
+    "anchors": [
+      "验证码",
+      "DK"
+    ],
+    "threshold": 2
+  },
+  "note": "L3 多步流程：连接 → GUI 自动化取号 → 写 DK 备注（参考真实会话 uu-remote-auto）（uu_remote 模板变体 1/1）"
+}

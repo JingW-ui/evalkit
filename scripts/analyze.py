@@ -15,7 +15,8 @@ import sys
 import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 from parser import replay_metrics, parse_session_jsonl
 from cost import compute_cost, format_cost
@@ -179,7 +180,7 @@ def main():
 
     # 加载 task
     task = None
-    tasks_dir = Path(__file__).parent / "tasks"
+    tasks_dir = _ROOT / "tasks"
     for tf in tasks_dir.glob("*.json"):
         t = json.loads(tf.read_text(encoding="utf-8"))
         if t.get("task_id") == args.task:
@@ -191,7 +192,7 @@ def main():
     data = analyze(args.jsonl, task)
 
     # 落盘
-    out_dir = Path(__file__).parent / args.out_dir
+    out_dir = _ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     json_out = out_dir / f"analyze_{task['task_id']}_full.json"
     md_out = out_dir / f"analyze_{task['task_id']}_report.md"

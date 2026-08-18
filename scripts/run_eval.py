@@ -13,8 +13,9 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-# 把 eval 目录加入 path
-sys.path.insert(0, str(Path(__file__).parent))
+# 把项目根目录加入 path（核心库在根）
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
 from runner import run_task, check_success, find_generated_session_jsonl
 from parser import parse_session_jsonl, compute_metrics
@@ -31,7 +32,7 @@ def main():
     parser.add_argument("--tasks", nargs="*", help="指定任务 ID（不指定则跑全部）")
     args = parser.parse_args()
 
-    base_dir = Path(__file__).parent
+    base_dir = _ROOT
     tasks_dir = base_dir / args.tasks_dir
     sandbox_base = base_dir / args.sandbox_dir
     results_dir = base_dir / args.results_dir

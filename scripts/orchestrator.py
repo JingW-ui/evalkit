@@ -27,7 +27,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 import session_report as sr
 import yaml as _yaml  # 若无 PyYAML，退化为简单文本读写
 
@@ -125,7 +126,7 @@ def run_probe(path_str: str, head_n: int, tail_n: int):
 def run_render(path_str: str, out: str):
     path = Path(path_str)
     data, _ = detect_and_scan(path)
-    out_path = Path(out) if out else Path(__file__).parent / "results" / "orchestrator_report.html"
+    out_path = Path(out) if out else _ROOT / "results" / "orchestrator_report.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(sr.render_html(data), encoding="utf-8")
     print(f"报告已生成: {out_path}")
