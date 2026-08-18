@@ -119,7 +119,7 @@ export default function BatchEval() {
           <option value="">（不指定设备）</option>
           {dkDevices.map(d => {
             const st = d.online ? (d.occupied ? `占用${d.occupy_username ? '·' + d.occupy_username : ''}` : '空闲') : '离线'
-            return <option key={d.serialno} value={d.label}>{d.label} · {st}</option>
+            return <option key={d.serialno} value={d.label}>{d.label} · {st}{d.ip ? ` · ${d.ip}` : ''}</option>
           })}
         </select>
         <button className="ghost" onClick={doFetchDk}>获取设备</button>

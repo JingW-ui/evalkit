@@ -906,6 +906,7 @@ class EvalServer:
                     "online": bool(d.get("online", False)),
                     "occupied": bool(d.get("occupied", False)),
                     "occupy_username": d.get("occupy_username"),
+                    "ip": d.get("ip"),
                 })
             # 排序：空闲优先 → 在线占用 → 离线
             def _sort_key(dv):
