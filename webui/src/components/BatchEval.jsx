@@ -98,7 +98,7 @@ export default function BatchEval() {
         <label>执行目录</label>
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
                placeholder="agent 工作目录（含 .mcp.json / .claude/skills）" style={{ flex: 1 }} />
-        <span className="muted" style={{ fontSize: 10 }}>MCP 从该目录 .mcp.json 加载 · skill 从 ~/.claude/skills 加载</span>
+        <span className="muted" style={{ fontSize: 10 }}>MCP 从该目录 .mcp.json 加载 · skill 从该目录 .claude/skills 加载</span>
       </div>
       <div className="launcher-actions">
         <button className="primary" onClick={doStart} disabled={running || !tasks.length}>
