@@ -18,9 +18,10 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["tasklist", "findstr"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: shell, args_contains: "tasklist"}
+    - {type: text_contains, any_of: ["RUNNING", "NOT_RUNNING", "运行", "未运行"]}
 prep: ""
 version: "1"
 enabled: true

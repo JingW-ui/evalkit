@@ -18,9 +18,10 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["if exist", "dir", "Test-Path"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: shell, args_contains: "exist"}
+    - {type: text_contains, any_of: ["存在", "不存在", "EXISTS", "NOT_FOUND"]}
 prep: ""
 version: "1"
 enabled: true

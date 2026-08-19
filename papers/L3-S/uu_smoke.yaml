@@ -29,9 +29,14 @@ accept_criteria:
   n_min: 10
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["STATUS=UU_MAIN"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: shell, args_contains: "qwinsta"}
+    - {type: tool_result, tool: shell, contains: "Active"}
+    - type: any
+      rules:
+        - {type: tool_result, tool: shell, contains: "STATUS=UU_MAIN"}
+        - {type: tool_result, tool: shell, contains: "UU_MAIN"}
 prep: ""
 version: "1"
 enabled: true

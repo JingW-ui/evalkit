@@ -22,9 +22,10 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["reg", "Test-Path"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: shell}
+    - {type: text_contains, any_of: ["已安装", "未安装", "INSTALLED", "NOT_INSTALLED"]}
 prep: ""
 version: "1"
 enabled: true

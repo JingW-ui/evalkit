@@ -18,9 +18,11 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["taskkill", "tasklist"]
-  threshold: 2
+  type: all
+  rules:
+    - {type: tool_called, tool: shell, args_contains: "taskkill"}
+    - {type: tool_called, tool: shell, args_contains: "tasklist"}
+    - {type: tool_ok, tool: shell, min: 2}
 prep: ""
 version: "1"
 enabled: true

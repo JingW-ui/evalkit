@@ -18,9 +18,10 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["is_connected"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: is_connected}
+    - {type: text_contains, any_of: ["connected", "disconnected", "已连接", "未连接"]}
 prep: ""
 version: "1"
 enabled: true

@@ -33,9 +33,10 @@ accept_criteria:
   n_min: 10
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["client.exe"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: shell, args_contains: "start.bat"}
+    - {type: tool_result, tool: shell, contains: "client.exe"}
 prep: ""
 version: "1"
 enabled: true

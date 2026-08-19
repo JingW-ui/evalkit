@@ -18,9 +18,11 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["list_devices"]
-  threshold: 1
+  type: all
+  rules:
+    - {type: tool_called, tool: list_devices}
+    - {type: tool_ok, tool: list_devices, min: 1}
+    - {type: text_contains, any_of: ["serialno"]}
 prep: ""
 version: "1"
 enabled: true

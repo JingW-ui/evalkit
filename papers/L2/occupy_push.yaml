@@ -26,9 +26,11 @@ accept_criteria:
   n_min: 20
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["occupy_device", "push_file"]
-  threshold: 2
+  type: all
+  rules:
+    - {type: tool_called, tool: occupy_device}
+    - {type: tool_called, tool: push_file}
+    - {type: tool_ok, min: 2}
 prep: ""
 version: "1"
 enabled: true

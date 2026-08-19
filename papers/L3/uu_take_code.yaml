@@ -33,9 +33,13 @@ accept_criteria:
   n_min: 3
   veto: false
 success_condition:
-  type: evidence_anchor
-  anchors: ["DEVICE_ID", "DK"]
-  threshold: 2
+  type: all
+  rules:
+    - {type: tool_called, tool: shell, args_contains: "qwinsta"}
+    - type: any
+      rules:
+        - {type: tool_result, tool: shell, contains: "DEVICE_ID="}
+        - {type: tool_result, tool: shell, contains: "DK 备注更新成功"}
 prep: ""
 version: "1"
 enabled: true
