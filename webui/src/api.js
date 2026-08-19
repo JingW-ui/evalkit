@@ -145,6 +145,12 @@ export async function getTasks() {
   return j.tasks || []
 }
 
+export async function getReferences() {
+  const r = await fetch(`${BASE}/api/references`)
+  const j = await r.json()
+  return j.references || {}
+}
+
 export async function saveTask(task) {
   const r = await fetch(`${BASE}/api/tasks`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(task),

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getTasks, saveTask, deleteTask } from '../api.js'
+import { getTasks, getReferences, saveTask, deleteTask } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const LEVELS = ['L1', 'L2', 'L3', 'L3-S', 'L4']
@@ -19,11 +19,13 @@ const emptyForm = () => ({
 
 export default function TaskBank() {
   const [tasks, setTasks] = useState(null)
+  const [refs, setRefs] = useState({})
+  const [openRef, setOpenRef] = useState(null)
   const [editing, setEditing] = useState(null)   // null=列表 / 'new' / task_id
   const [form, setForm] = useState(emptyForm())
   const [msg, setMsg] = useState('')
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => { refresh(); getReferences().then(setRefs).catch(() => {}) }, [])
   async function refresh() { setTasks(await getTasks()) }
 
   function toForm(t) {
@@ -109,21 +111,25 @@ export default function TaskBank() {
           </tr></thead>
           <tbody>
             {tasks.map(t => (
-              <tr key={t.task_id}>
-                <td title={t.title}>{esc(t.title || '—')}</td>
-                <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.task_id}>{esc(t.task_id)}</td>
-                <td><span className="badge" style={{ background: (LEVEL_COLOR[t.level] || '#6e7681') + '33', color: LEVEL_COLOR[t.level] || '#6e7681' }}>{t.level || '?'}</span></td>
-                <td>{esc(t.skill_expected || '—')}</td>
-                <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.query}>{esc(t.query || '—')}</td>
-                <td>{(t.tools_required || []).map(x => (
-                  <span key={x.tool} className="badge" style={{ marginRight: 3, background: '#6e7681' + '22', color: '#6e7681' }}>{esc(x.tool)}</span>
-                ))}</td>
-                <td><span style={{ color: t.enabled === 0 ? 'var(--red)' : 'var(--green)' }}>{t.enabled === 0 ? '停用' : '启用'}</span></td>
-                <td>
-                  <button className="ghost" onClick={() => startEdit(t)}>编辑</button>
-                  <button className="ghost" onClick={() => del(t)}>删除</button>
-                </td>
-              </tr>
+              <React.Fragment key={t.task_id}>
+                <tr>
+                  <td title={t.title}>{esc(t.title || '—')}</td>
+                  <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.task_id}>{esc(t.task_id)}</td>
+                  <td><span className="badge" style={{ background: (LEVEL_COLOR[t.level] || '#6e7681') + '33', color: LEVEL_COLOR[t.level] || '#6e7681' }}>{t.level || '?'}</span></td>
+                  <td>{esc(t.skill_expected || '—')}</td>
+                  <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.query}>{esc(t.query || '—')}</td>
+                  <td>{(t.tools_required || []).map(x => (
+                    <span key={x.tool} className="badge" style={{ marginRight: 3, background: '#6e7681' + '22', color: '#6e7681' }}>{esc(x.tool)}</span>
+                  ))}</td>
+                  <td><span style={{ color: t.enabled === 0 ? 'var(--red)' : 'var(--green)' }}>{t.enabled === 0 ? '停用' : '启用'}</span></td>
+                  <td>
+                    <button className="ghost" onClick={() => setOpenRef(openRef === t.task_id ? null : t.task_id)}>参考</button>
+                    <button className="ghost" onClick={() => startEdit(t)}>编辑</button>
+                    <button className="ghost" onClick={() => del(t)}>删除</button>
+                  </td>
+                </tr>
+                {openRef === t.task_id && <RefRow refData={refs[t.task_id]} />}
+              </React.Fragment>
             ))}
             {!tasks.length && <tr><td className="empty" colSpan="8" style={{ padding: 12 }}>题库为空——重启服务自动从 papers/ 导入，或点「新增题目」</td></tr>}
           </tbody>
@@ -133,6 +139,30 @@ export default function TaskBank() {
         权威源 = papers/*.yaml（git 管理）；编辑保存只写回 YAML 并提示人工 commit，不自动提交。
       </p>
     </div>
+  )
+}
+
+function RefRow({ refData }) {
+  if (!refData) return (
+    <tr><td colSpan="8" style={{ padding: 12, background: 'var(--bg)' }} className="muted">暂无实测参考（该题未跑测）</td></tr>
+  )
+  return (
+    <tr><td colSpan="8" style={{ padding: 12, background: 'var(--bg)' }}>
+      <div style={{ fontSize: 12 }}>
+        <div style={{ marginBottom: 8 }}>
+          <span className="muted">实测模型 </span>{esc(refData.model || '—')}
+          <span className="muted" style={{ marginLeft: 12 }}>实测工具链（{refData.tools.length}）</span>
+          <span style={{ marginLeft: 6 }}>
+            {(refData.tools || []).map((n, i) => (
+              <span key={i} className="badge" style={{ marginRight: 3, background: '#6e7681' + '22', color: '#6e7681' }}>{esc(n)}</span>
+            ))}
+          </span>
+        </div>
+        <div style={{ whiteSpace: 'pre-wrap', maxHeight: 220, overflow: 'auto', color: 'var(--ink2)', background: 'var(--bg2)', padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}>
+          {esc(refData.content)}
+        </div>
+      </div>
+    </td></tr>
   )
 }
 
@@ -153,7 +183,7 @@ function TaskForm({ form, setForm, editing, onSubmit, onCancel }) {
         <label>设备变量 <input value={form.device_var} onChange={e => set('device_var', e.target.value)} /></label>
         <label>前置准备 <input value={form.prep} onChange={e => set('prep', e.target.value)} placeholder="人工锁屏（可选）" /></label>
       </div>
-      <label style={{ display: 'block', margin: '8px 0' }}>预计答案 · 最终结果（result，主判据）
+      <label style={{ display: 'block', margin: '8px 0' }}>参考答辩 · 最终结果（result，主判据）
         <textarea rows={2} style={{ width: '100%' }} value={form.result} onChange={e => set('result', e.target.value)} placeholder="client.exe 进程在目标机运行..." />
       </label>
       {showProcess && (
@@ -171,9 +201,6 @@ function TaskForm({ form, setForm, editing, onSubmit, onCancel }) {
         <label><input type="checkbox" checked={form.veto} onChange={e => set('veto', e.target.checked)} /> 一票否决(veto)</label>
         <label><input type="checkbox" checked={form.enabled} onChange={e => set('enabled', e.target.checked)} /> 启用</label>
       </div>
-      <label style={{ display: 'block', margin: '8px 0' }}>机器粗筛 success_condition（JSON）
-        <textarea rows={3} style={{ width: '100%', fontFamily: 'monospace' }} value={form.success_condition} onChange={e => set('success_condition', e.target.value)} placeholder='{"type":"evidence_anchor","anchors":["client.exe"],"threshold":1}' />
-      </label>
       <label style={{ display: 'block', margin: '8px 0' }}>备注
         <input style={{ width: '100%' }} value={form.note} onChange={e => set('note', e.target.value)} />
       </label>

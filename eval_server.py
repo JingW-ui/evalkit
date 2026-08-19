@@ -890,6 +890,16 @@ class EvalServer:
     def list_tasks(self) -> dict:
         return {"tasks": self._records.list_tasks()}
 
+    def get_references(self) -> dict:
+        """读取 papers/references.json（实测参考答案：content + 工具链）。"""
+        try:
+            p = Path(__file__).parent / "papers" / "references.json"
+            if p.is_file():
+                return {"references": json.loads(p.read_text(encoding="utf-8"))}
+        except Exception:
+            pass
+        return {"references": {}}
+
     def save_task(self, task: dict) -> dict:
         if not task.get("task_id"):
             return {"ok": False, "error": "缺少 task_id"}
@@ -1344,6 +1354,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"executions": recs})
         elif self.path == "/api/tasks":
             self._send_json(self.server.eval.list_tasks())
+        elif self.path == "/api/references":
+            self._send_json(self.server.eval.get_references())
         elif self.path.startswith("/api/env"):
             import urllib.parse
             qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
