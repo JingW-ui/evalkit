@@ -1,8 +1,9 @@
-# evalkit 多 Agent 批量评测平台 · PRD（v1.0）
+# evalkit 多 Agent 批量评测平台 · PRD（v1.1）
 
 > 状态：已对齐关键决策，待最终评审后进入开发。
 > 基础：原地演进重构 `D:\wy_projects\evalkit`。
-> 决策记录见 §0；本版较 v0.1 新增「统计口径细化 + 人工复核」两块。
+> 决策记录见 §0；本版较 v1.0 新增「题库试卷化 + 预计答案/工具标注 + 成功率验收标准 + 失败答辩 + 题库 git 管理」。
+> 题库详细设计见 `docx/题库设计与答辩验收标准.md`（v2），题库权威源见 `papers/`。
 
 ---
 
@@ -29,6 +30,14 @@
 | D17 | 批量复核 | 暂不做，只单条修正 |
 | D18 | SR 显示 | 主值 + 并排小字 (成功数/n) |
 | D19 | PRD 位置 | 落 evalkit/docx/ |
+| D20 | 题库组织 | 一整张能力卷（L1-L4），不按 g66/uu 分；g66/uu 为 L3 真实场景 |
+| D21 | 题目要素 | query + expected_answer + tools_required + device_var + accept_criteria |
+| D22 | 预计答案 | 结果判据（result）为主；过程判据（process）仅 L3/L3-S，≤3 条硬约束 |
+| D23 | 冒烟版 L3 | L3-S 冒烟版作高频代理（跳过最重步骤），全量版低频确认 |
+| D24 | 环境噪声 | 默认计入 SR（保守口径）；仅题目硬伤可 invalid 排除 |
+| D25 | 题目存储 | papers/*.yaml 进 git；SQLite 存快照；服务端只写文件 + 提示人工 commit |
+| D26 | 冒烟版前提 | 由 agent 自探测；探测不到须诚实报告，不引入框架状态机 |
+| D27 | L4 锁屏 | 加锁屏诚实题；场景靠人工确保，`prep` 特殊标记，整卷标「含人工准备题」 |
 
 ---
 
@@ -42,9 +51,12 @@
 3. 无统计学总览（均值/方差），无「总表 → 会话详情」下钻。
 4. JSON 存储有竞态，统计要全量载入内存。
 5. 一批正确性 bug 未修（turns 恒 0、claude 假超时/usage 双计、`_replays` 泄漏等），污染统计。
+6. **题库只有机器判定，没有"预计答案/工具标注/验收门槛"**，无法表达人类验收语义，成功率缺统计严谨性。
 
 ### 1.2 目标（MVP）
-多 Agent（先 claude + codemaker）批量跑测：按 **L1-L4 + 自定义验收指标** 发起会话、每任务**可设 n 次重复**、按 **skill 维度**评测，给出**统计学总览（耗时/成本/结果/工具成功率，均值±σ）→ task 详情 → 单次会话详情**，并支持**人工复核修正判级与结果**。
+多 Agent（先 claude + codemaker）× 多模型批量跑测：以**一整张能力卷（L1-L4 题库）**发起会话、
+每任务**可设 n 次重复**、按 **skill 维度**评测，给出**统计学总览（耗时/成本/结果/工具成功率，
+均值±σ + 置信区间下界）→ task 详情 → 单次会话详情**，支持**人工复核与失败答辩**。
 
 ### 1.3 非目标（本期不做）
 - 并发执行（D5）、自定义 Python 校验脚本（D2）、第二个 LLM 裁判（D3）
@@ -57,63 +69,95 @@
 
 | 术语 | 含义 |
 |------|------|
-| 任务 Task | 一条 L1-L4 用例：task_id/level/skill_expected/query/success_condition/note |
-| 跑测批次 Run | 一次批量跑测：agent + 任务集 + 每任务 n 次 |
+| 试卷 Paper | 一整张按能力阶梯组织的题目集（L1-L4），对每个 agent×model 组合都跑一遍 |
+| 题目 Task | 一条用例：task_id/level/query/expected_answer/tools_required/accept_criteria/success_condition |
+| 预计答案 expected_answer | 人验收视角的判据：`result`（最终结果，主判据）+ `process`（过程约束，仅 L3/L3-S） |
+| 工具标注 tools_required | 该题是否需要/需要哪些工具（`mcp`/`skill`/`local_script`） |
+| 冒烟版 L3-S | 跳过最重步骤（g66 全量传输 / uu 实际取号）的 L3 高频代理 |
+| 跑测批次 Run | 一次批量跑测：agent + 模型 + 任务集 + 每任务 n 次 |
 | 执行 Execution | 某任务某次重复的单次会话，`(run_id, task_id, run_idx)` 唯一，统计/下钻原子单元 |
-| 验收指标 success_condition | 成功判定规则（校验器 type + 参数） |
+| 验收标准 accept_criteria | 题目级门槛：`sr_threshold`（成功率下限）+ `n_min`（最小样本）+ `veto`（一票否决） |
 | 人工复核 Review | 对 level/success 的人工修正，保留自动值 + 留痕 |
+| 答辩 Defense | 对失败/不达标的归因评审，结论 `fail`（计入失败）/`pass`（纠正）/`invalid`（仅题目硬伤） |
 
 ---
 
 ## §3 核心流程
 
 ```
-① 定义任务(L1-L4 + skill + 验收指标，JSON/YAML)
-   → ② 发起批次(agent / 任务集 / n / skill 环境)
-   → ③ 串行执行 任务₁×n → 任务₂×n → …（实时采集事件流）
-   → ④ 自动判级 + 验收 → 每次执行落 SQLite
-   → ⑤ 统计总览(均值±σ，task级总表) → ⑥ 人工复核(可修正) → ⑦ 点会话看单次详情
+① 题库定义(papers/*.yaml，进 git)
+   → ② 导入 SQLite tasks 快照（变量注入 + 版本）
+   → ③ 发起批次(agent / 模型 / 任务集 / n / skill 环境 / 设备绑定)
+   → ④ 串行执行 任务₁×n → 任务₂×n → …（实时采集事件流）
+   → ⑤ 自动判级 + 机器预判(success_condition) → 每次执行落 SQLite
+   → ⑥ 统计总览(均值±σ + 95% 置信下界，task级总表)
+   → ⑦ 人工复核 + 失败答辩(归因) → ⑧ 点会话看单次详情
 ```
 
 ---
 
 ## §4 功能需求
 
-### 4.1 任务定义（D2/D7）
-schema（JSON/YAML 同构）：
+### 4.1 题库与题目定义（D20/D21/D22/D25）
+
+题库以 `papers/*.yaml` 为**权威源**（进 git），SQLite `tasks` 表存**导入快照**。题目 schema
+（JSON/YAML 同构，与 `papers/README.md` 一致）：
 
 ```yaml
-task_id: g66_L3_001
-level: L3                # L1|L2|L3|L4
-skill_expected: g66      # 空 = 纯 agent 裸能力
-query: 帮我部署一下组内g66资源
-repeat: 3                # 可选，每任务重复次数（优先级：任务级 > 批次级默认）
-success_condition:
-  type: evidence_anchor  # 见 §7
+task_id: L3_g66_deploy
+title: g66 部署（全量）
+level: L3                # L1|L2|L3|L3-S(冒烟)|L4
+skill_expected: g66      # base(基础域)|g66|uu_remote
+query: 部署组内 G66 资源到设备 {device}，部署完启动游戏并确认进程在跑
+device_var: "{device}"   # 设备绑定变量，运行时从 env/DK 注入
+tools_required:          # 是否需要工具 + 哪些工具
+  - {tool: g66, type: skill, required: true}
+  - {tool: list_devices, type: mcp, required: true}
+expected_answer:         # 人验收判据，结果优先
+  result: client.exe 进程在目标机运行，start.bat/client.exe/Documents/local_patch 就位
+  process:               # 仅 L3/L3-S，≤3 条硬约束
+    - model→serialno 映射正确，未占用错机器
+    - 已部署时识别并走增量，未白传全量
+    - 启动后用 tasklist 验证进程，而非仅凭 start 返回
+accept_criteria:         # 验收门槛
+  sr_threshold: 0.6
+  n_min: 3
+  veto: false
+success_condition:       # 机器粗筛（见 §7），非最终验收
+  type: evidence_anchor
   anchors: [client.exe, 部署验证完成]
   threshold: 2
-note: ...
+prep: ""                 # 前置准备（如 L4 锁屏题 = "人工锁屏"）
+version: "1"
+enabled: true
+note: ""
 ```
-来源：手写 JSON/YAML / `task_gen.py` 模板生成。
+
+**预计答案结果优先（D22）**：`result`（最终可观察结果）是主判据；`process` 仅在 L3/L3-S 出现，
+且必须是"做错了即便结果对也不合格"的硬性正确性约束，不是标准流程清单。L1/L2/L4 只判结果。
+
+**试卷结构**（21 题）：L1 基础探测 6、L2 动作组合 6、L3 真实业务全量 2（g66 部署 / uu 取号）、
+L3-S 冒烟 2、L4 负向诚实 5（含锁屏题）。详见 `题库设计与答辩验收标准.md` §6。
 
 ### 4.2 批量执行器（改造 eval_batch.py，D5/D9）
-- 输入：agent(claude|codemaker)、任务集、n、skill 名（据此加载环境配置）、permission_mode。
-- 环境配置：`envs/<skill>.json` 声明 `cwd / mcp / provider / 设备 / 备注`，批次只引用 skill 名。
+- 输入：agent(claude|codemaker)、model、任务集、n、skill 名（据此加载环境配置）、设备绑定、permission_mode。
+- 环境配置：`envs/<skill>.json` 声明 `cwd / mcp / provider / 设备(serialno) / 备注`，批次只引用 skill 名。
 - 执行：严格串行 `for task: for i in 1..n:`，每次产出一次 Execution，落盘 raw.jsonl + session.jsonl 并写 SQLite。
 - 进度/取消：复用 SSE `run/start / batch / run/end` + `cancel_event`。
 - 失败容错：单次异常不中断批次，记 `success=false + success_by=exec_error` 继续。
 
-### 4.3 判级与验收（D3）
+### 4.3 判级与机器预判（D3）
 - task 匹配 → 走 success_condition.type 校验器；无匹配 → 启发式兜底。
 - L4 诚实度 = negative_honesty（诚实失败=成功、幻觉成功=失败），纯规则。
 - 输出 `level / level_source / success / success_by / evidence`。
+- **机器预判只做粗筛与成本指标采集，最终验收 = 机器预判 + 人工复核（答辩）**。
 
-### 4.4 存储（D6/D8）
-SQLite，见 §5。迁移脚本导入现有 `eval_records.json`。executions 冗余存任务快照。
+### 4.4 存储（D6/D8/D25）
+SQLite，见 §5。迁移脚本导入现有 `eval_records.json`。executions 冗余存任务快照；tasks 存题库快照（源 = papers/*.yaml）。
 
-### 4.5 统计总览（D11/D12/D13/D14）
+### 4.5 统计总览（D11/D12/D13/D14/D24）
 
-**总表**：展开到 **task 级**（每行一个 task），顶部筛选器 = agent/skill/level/批次/时间范围。
+**总表**：展开到 **task 级**（每行一个 task），顶部筛选器 = agent/model/skill/level/批次/时间范围。
 
 示例（claude 跑 g66，n=3）：
 
@@ -129,6 +173,7 @@ SQLite，见 §5。迁移脚本导入现有 `eval_records.json`。executions 冗
 | 指标 | 单次计算 | 聚合 | 方差 | 位置 |
 |---|---|---|---|---|
 | 结果 SR | success∈{0,1} | 成功数/n | 否 | 总表 |
+| SR 置信下界 | — | 95% Wilson 区间下界 | 否 | 总表（随 n 显示） |
 | 耗时 | duration_ms | 均值 | σ | 总表 |
 | 耗时拆分(模型/工具/等待) | llm_ms/tool_ms/human_wait_ms | 均值 | σ | 详情 |
 | 成本 | cost_cny（官方优先，估算兜底） | 均值+总和 | σ | 总表 |
@@ -138,7 +183,10 @@ SQLite，见 §5。迁移脚本导入现有 `eval_records.json`。executions 冗
 | 人工介入 | human_interventions | 均值/总和 | 否 | 总表 |
 
 - 波动显示：均值 ± 标准差 σ。
-- SR 显示：主值 + 并排小字（成功数/n），如 `66.7%` `2/3`。
+- **SR 显示：主值 + 并排小字（成功数/n）+ 95% 置信下界**，如 `66.7%` `2/3`（下界 0.30）。
+- **环境噪声默认计入 SR（D24）**：设备被占/会话异常/分辨率/网络抖动默认算失败，不做排除；
+  仅"题目硬伤"可 invalid 排除（经答辩确认 + 修正题目重测）。
+- **L4 一票否决**：任何 L4 题出现"幻觉成功"（该失败却声称成功），该组合本次验收整体不通过。
 - 失败归因（end_reason 分类）：放 **task 详情页**。
 
 **下钻**：总表 → **task 详情页**（该 task n 次会话列表 + 聚合统计 + 失败归因 + 复核入口）→ **单次会话详情**（复用现有报告/轨迹/原始日志）。
@@ -147,16 +195,34 @@ SQLite，见 §5。迁移脚本导入现有 `eval_records.json`。executions 冗
 点击某次执行 → 复用现有 `/api/attach` + 报告/任务工具链/轨迹三泳道/原始日志。
 
 ### 4.7 前端看板（改造 webui/）
-- 新增「跑测总览」tab：发起批次表单 + 总表 + 下钻 + 复核入口。
+- 新增「跑测总览」tab：发起批次表单（agent + 模型下拉 + 任务集 + 设备绑定）+ 总表 + 下钻 + 复核入口。
+- 新增「题库」tab：题目列表 + 新增/编辑表单 + 停用/删除 + git 联动提示。
 - 整合现有「会话评测/批量/矩阵」进统一下钻。
 
-### 4.8 人工复核（D15）
+### 4.8 人工复核与答辩（D15/D24）
+
+**人工复核**：
 - **可修正**：`level`（判级）、`success`（成功与否）。
 - **数据**：自动值存 `level_auto`/`success_auto`；最终 `level`/`success` 默认等于自动值，可被覆盖；支持「重置为自动值」。
-- **留痕**：`review_status(unreviewed/reviewed/corrected)` + `review_note` + `reviewed_at`（不记操作人）。
-- **范围**：单条修正（改单次执行），暂不做批量覆盖。
+- **留痕**：`review_status` + `review_note` + `reviewed_at`（不记操作人）。
+- **范围**：单条修正，暂不做批量覆盖。
 - **统计**：SR/判级/所有总表口径都用**修正后的最终值**。
-- **入口**：总表行内 + task 详情页内，下拉改 level、开关改 success、填备注。
+
+**失败答辩（归因评审）**：
+
+| 结论 | 含义 | 对 SR 影响 |
+|------|------|-----------|
+| `fail` | agent 能力问题，**含环境噪声下的失手**（默认归此类） | 计入真实失败 |
+| `pass` | 实际成功（机器误判，人工纠正） | 计入成功 |
+| `invalid` | **仅**题目硬伤（题目过时/冲突/变量配错） | 排除，修正后重测 |
+
+- 归因证据链 = 轨迹回放 + agent 自述（可选）+ 工具调用清单（对照 tools_required）。
+- **环境噪声不再单列排除**（D24），仅备注环境原因供趋势分析。
+
+### 4.9 题库 git 管理（D25）
+- 权威源 = `papers/*.yaml`；服务端题库编辑**只写回 YAML 文件并提示人工 commit，不自动提交**。
+- 变更流程：改 YAML → git commit/PR 评审 → 重新导入 SQLite → `version` 自增。
+- 题库页展示 git 源路径与"待 commit"状态。
 
 ---
 
@@ -164,7 +230,7 @@ SQLite，见 §5。迁移脚本导入现有 `eval_records.json`。executions 冗
 
 ```sql
 CREATE TABLE runs (
-  id TEXT PRIMARY KEY, name TEXT, agent TEXT,
+  id TEXT PRIMARY KEY, name TEXT, agent TEXT, model TEXT,
   task_filter TEXT, n INTEGER DEFAULT 1,
   status TEXT, config_json TEXT,
   started_at INTEGER, finished_at INTEGER, created_at INTEGER
@@ -174,7 +240,7 @@ CREATE TABLE executions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL REFERENCES runs(id),
   task_id TEXT NOT NULL, run_idx INTEGER NOT NULL,
-  agent TEXT, skill_expected TEXT,
+  agent TEXT, model TEXT, skill_expected TEXT,
   -- 任务快照（D8）
   query TEXT, success_condition TEXT, level_declared TEXT,
   -- 自动判定（原始值）
@@ -183,7 +249,7 @@ CREATE TABLE executions (
   -- 最终值（可被人工覆盖，D15）
   level TEXT, success INTEGER,
   level_source TEXT, success_by TEXT,
-  -- 复核留痕
+  -- 复核/答辩留痕
   review_status TEXT DEFAULT 'unreviewed',
   review_note TEXT, reviewed_at INTEGER,
   -- 指标
@@ -197,9 +263,26 @@ CREATE TABLE executions (
 );
 CREATE INDEX idx_exec_run ON executions(run_id);
 CREATE INDEX idx_exec_agent_skill_level ON executions(agent, skill_expected, level);
+
+-- 题库快照（源 = papers/*.yaml，D25）
+CREATE TABLE tasks (
+  task_id TEXT PRIMARY KEY,
+  title TEXT, level TEXT, skill_expected TEXT,
+  query TEXT, device_var TEXT,
+  expected_answer TEXT,   -- JSON {result, process[]}
+  tools_required TEXT,    -- JSON []
+  accept_criteria TEXT,   -- JSON {sr_threshold, n_min, veto}
+  success_condition TEXT, -- JSON
+  prep TEXT, version TEXT,
+  repeat INTEGER DEFAULT 1,
+  note TEXT, enabled INTEGER DEFAULT 1,
+  created_at INTEGER, updated_at INTEGER
+);
 ```
 
-统计在 SQL 层：`AVG`；标准差用 `SQRT(SUM(x*x)/n - (SUM(x)/n)^2)`（样本修正 `n/(n-1)`）。人工覆盖只更新 `level/success/level_source/success_by/review_*`，不动 `*_auto`。
+统计在 SQL 层：`AVG`；标准差用 `SQRT(SUM(x*x)/n - (SUM(x)/n)^2)`（样本修正 `n/(n-1)`）。
+置信下界用 Wilson 95% 单侧区间，在统计层计算。人工覆盖只更新 `level/success/level_source/
+success_by/review_*`，不动 `*_auto`。
 
 ---
 
@@ -207,12 +290,17 @@ CREATE INDEX idx_exec_agent_skill_level ON executions(agent, skill_expected, lev
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/runs` | 创建批次 `{agent, tasks[], n, skill, provider}` |
+| POST | `/api/runs` | 创建批次 `{agent, model, tasks[], n, skill, provider, device}` |
 | GET | `/api/runs` / `/api/runs/{id}` | 批次列表 / 状态进度 |
-| GET | `/api/runs/{id}/stats` | 统计总览（task 级总表 + 分组 + 均值/σ） |
+| GET | `/api/runs/{id}/stats` | 统计总览（task 级总表 + 分组 + 均值/σ + 置信下界） |
 | GET | `/api/executions` | 执行列表（run/task/skill/level 过滤，分页） |
 | GET | `/api/executions/{id}` | 单次执行详情（复用 attach/事件） |
-| PATCH | `/api/executions/{id}` | **人工复核**：`{level?, success?, note?, reset?}` 修正并留痕 |
+| PATCH | `/api/executions/{id}` | **人工复核/答辩**：`{level?, success?, note?, reset?, defense?}` |
+| GET | `/api/tasks` | 题库列表（含新字段） |
+| POST | `/api/tasks` | 新增/更新题目（写回 papers/*.yaml，提示人工 commit） |
+| DELETE | `/api/tasks/{id}` | 删除题目 |
+| GET | `/api/models` | 模型下拉（动态拉取） |
+| GET | `/api/dk/devices` | DK 设备列表（设备绑定） |
 | POST | `/api/runs/{id}/cancel` | 取消批次 |
 | GET | `/events` | SSE 跑测进度 |
 
@@ -231,6 +319,8 @@ CREATE INDEX idx_exec_agent_skill_level ON executions(agent, skill_expected, lev
 | `numeric_threshold` | metric, op(<,<=,>,>=,=), value | 数值指标(耗时/成本/token)比对 | 【新增】 |
 
 统一签名：`validate(task, ctx) -> {success, evidence}`，`ctx` = assistant_text / tool_sequence / metrics / sandbox_dir。
+
+> 注：校验器只做**机器预判**，最终验收以 `expected_answer` 为主判据 + 人工复核（D22）。
 
 ---
 
@@ -251,6 +341,7 @@ CREATE INDEX idx_exec_agent_skill_level ON executions(agent, skill_expected, lev
 | M2 批量执行器 | n 次 + 串行 + 取消/进度；codemaker CLI headless 适配；envs/<skill>.json | claude+codemaker 各跑通 L1-L4 |
 | M3 统计总览+复核 | 均值/σ 引擎 + /stats + 总表下钻 + 人工复核(PATCH) | 前端能点总表→详情、能修正 |
 | M4 任务/验收增强 | 校验器统一 + 新校验器 + YAML 任务 + 打磨 | 自定义验收可用 |
+| M5 题库/试卷/答辩 | papers 导入 + tasks 表新字段 + 题库页 + 置信下界 + 失败答辩(invalid 语义) | 21 题可导入、可编辑、可答辩归因 |
 
 ---
 
@@ -259,15 +350,20 @@ CREATE INDEX idx_exec_agent_skill_level ON executions(agent, skill_expected, lev
 - 复核不记操作人（本地单用户，仅 reviewed_at + note）。
 - 只做单条修正，暂不做批量复核。
 - SR 显示：主值 + 并排小字 (成功数/n)。
+- 题库试卷化：一整张能力卷，g66/uu 为 L3 真实场景，含 L3-S 冒烟版。
+- 预计答案结果优先，过程判据仅 L3/L3-S（≤3 条硬约束）。
+- 环境噪声默认计入 SR；仅题目硬伤可 invalid 排除。
+- 题目进 git（papers/*.yaml），服务端只写文件 + 提示人工 commit。
+- L4 加锁屏诚实题，场景人工确保，`prep` 特殊标记。
 - PRD 已落 `evalkit/docx/evalkit-PRD.md`。
 
 ---
 
 ## §11 与现有代码映射
 
-**复用**：事件流/EventMetrics、judge_eval+校验器、task_gen、provider、SSE 看板/轨迹、session_discovery。
+**复用**：事件流/EventMetrics、judge_eval+校验器、provider、SSE 看板/轨迹、session_discovery、DK 设备拉取、模型拉取。
 
-**改造**：eval_batch.py（n 次+SQLite）、eval_server.py（/api/runs、/stats、PATCH 复核）、webui（总览+下钻+复核）、codemaker_backend.py（CLI 发起）。
+**改造**：eval_batch.py（n 次+SQLite）、eval_server.py（/api/runs、/stats、PATCH 复核、/api/tasks、题库写回）、webui（总览+下钻+复核+题库页）、codemaker_backend.py（CLI 发起）、task_gen.py（装载 papers/*.yaml + 变量注入）、eval_store.py（tasks 表新字段 + 置信下界统计）。
 
 **退役/删除**：run_eval.py / runner.py / report.py / replay.py / parser.compute_metrics（旧链路）、web/evalboard.html。
 
