@@ -504,6 +504,10 @@ class ClaudeEvalBackend:
         metrics.finalize()
         duration_s = round(time.monotonic() - started_wall, 2)
         snapshot = metrics.snapshot()
+        # 用请求的规范模型名（self.model），避免上游路由别名污染统计分组
+        # （如 codemaker 代理把 claude-opus-4-8 路由到 claude-opus-4-8-zen）
+        if self.model:
+            snapshot["model"] = self.model
         # Claude 官方直取字段并入快照
         snapshot["cost_usd"] = result_info["cost_usd"]
         snapshot["ttft_ms_official"] = result_info["ttft_ms"]
