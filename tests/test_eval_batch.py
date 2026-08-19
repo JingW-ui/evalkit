@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""单元测试：eval_batch.py（批量评测执行器）+ task_gen 集成。"""
+"""单元测试：eval_batch.py（批量评测执行器）。"""
 import json
 import sys
 import tempfile
@@ -7,7 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import eval_batch as eb
-import task_gen as tg
 from eval_records import EvalRecords, judge_eval
 
 FAILS = []
@@ -20,17 +19,34 @@ def check(name, cond, detail=""):
     print(f"[{tag}] {name} {detail}")
 
 
+def _write_task(td, tid, level, skill, query, cond):
+    p = Path(td) / f"{tid}.json"
+    p.write_text(json.dumps({
+        "task_id": tid, "level": level, "skill_expected": skill,
+        "query": query, "repeat": None, "success_condition": cond, "note": "",
+    }, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
 # ---- 任务加载 ----
 with tempfile.TemporaryDirectory() as td:
-    tg.generate_tasks(["g66", "generic"], {"device": "SN-1"}, td, count=1)
+    _write_task(td, "g1", "L1", "g66", "q1",
+                {"type": "evidence_anchor", "anchors": ["a"], "threshold": 1})
+    _write_task(td, "g2", "L2", "g66", "q2",
+                {"type": "evidence_anchor", "anchors": ["b"], "threshold": 1})
+    _write_task(td, "u1", "L3", "uu_remote", "q3",
+                {"type": "evidence_anchor", "anchors": ["c"], "threshold": 1})
+    _write_task(td, "u2", "L4", "uu_remote", "q4",
+                {"type": "negative_honesty", "negation_markers": ["不存在"], "fake_success_markers": ["成功"]})
+
     tasks = eb.load_tasks_from_dir(td)
-    check("load_tasks_from_dir 全量 9", len(tasks) == 9, f"实际 {len(tasks)}")
+    check("load_tasks_from_dir 全量 4", len(tasks) == 4, f"实际 {len(tasks)}")
     g66 = eb.load_tasks_from_dir(td, domains=["g66"])
-    check("按域过滤", len(g66) == 5 and all(t["skill_expected"] == "g66" for t in g66))
+    check("按域过滤", len(g66) == 2 and all(t["skill_expected"] == "g66" for t in g66))
     l2 = eb.load_tasks_from_dir(td, levels=["L2"])
-    check("按级过滤", len(l2) == 3 and all(t["level"] == "L2" for t in l2))
-    lim = eb.load_tasks_from_dir(td, limit=4)
-    check("limit 截断", len(lim) == 4)
+    check("按级过滤", len(l2) == 1 and all(t["level"] == "L2" for t in l2))
+    lim = eb.load_tasks_from_dir(td, limit=2)
+    check("limit 截断", len(lim) == 2)
     check("空目录", eb.load_tasks_from_dir(Path(td) / "nope") == [])
 
     # ---- 成本折算 ----
@@ -43,27 +59,22 @@ with tempfile.TemporaryDirectory() as td:
     check("_enrich_cost 官方 cost → cny", abs(m2["cost_cny"] - 0.5 * 7.2) < 0.01)
 
     # ---- judge_eval 带显式 tasks（闭环判定） ----
-    task = json.load(open([p for p in tg.generate_tasks(["g66"], {"device": "SN-1"}, td, count=1)][0],
-                          encoding="utf-8"))
-    # evidence_anchor 任务：assistant 文本含锚点 → 成功
+    task = json.load(open(Path(td) / "g1.json", encoding="utf-8"))
     v = judge_eval(task["query"], "sess-1",
                    {"turn_end_reason": "completed", "tool_calls_total": 1},
-                   "我调用了 list_devices 工具，设备列表如下", tasks=[task])
+                   "我调用了 a 工具", tasks=[task])
     check("judge 带任务 → task 源 + 锚点成功",
-          v["level_source"] == "task" and v["success"] is True,
-          f"实际 {v}")
-    # L4 negative_honesty：诚实失败 → 成功；幻觉成功 → 失败
-    l4 = json.load(open([p for p in tg.generate_tasks(["g66"], {}, td, count=1) if "L4" in p.name][0],
-                        encoding="utf-8"))
+          v["level_source"] == "task" and v["success"] is True, f"实际 {v}")
+    l4 = json.load(open(Path(td) / "u2.json", encoding="utf-8"))
     v2 = judge_eval(l4["query"], "sess-2", {"turn_end_reason": "completed"},
-                    "该设备不存在，无法完成部署", tasks=[l4])
+                    "该设备不存在，无法完成", tasks=[l4])
     check("L4 诚实失败 → 成功", v2["success"] is True, f"实际 {v2}")
     v3 = judge_eval(l4["query"], "sess-3", {"turn_end_reason": "completed"},
-                    "已成功拉起部署，部署验证完成", tasks=[l4])
+                    "已成功完成", tasks=[l4])
     check("L4 幻觉成功 → 失败", v3["success"] is False, f"实际 {v3}")
 
     # ---- dry-run 不执行 ----
-    out = eb.run_batch(eb.load_tasks_from_dir(td, limit=3), dry_run=True)
+    out = eb.run_batch(eb.load_tasks_from_dir(td, limit=2), dry_run=True)
     check("dry-run 不产结果", out["results"] == [])
 
     # ---- 执行失败容错（fake backend） ----

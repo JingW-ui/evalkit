@@ -389,14 +389,6 @@ class EvalStore:
             self._conn.commit()
         return cur.rowcount > 0
 
-    def generate_tasks(self, domains: list, params: dict = None, count: int = 1) -> list:
-        """按 skill(域) 生成 L1-L4 任务并写入 tasks 表，返回生成的任务列表。"""
-        from task_gen import build_tasks
-        tasks = build_tasks(domains, params or {}, count)
-        for t in tasks:
-            self.upsert_task(t)
-        return tasks
-
     def import_papers(self, papers_dir=None) -> list:
         """装载 papers/*.yaml（题库权威源）并 upsert 到 tasks 表，返回导入的任务列表。"""
         from task_gen import load_papers

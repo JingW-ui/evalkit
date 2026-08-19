@@ -32,12 +32,14 @@ def test_roundtrip_new_fields():
     try:
         n = len(s.import_papers())
         assert n == 23, n
-        t = s.get_task("L3_g66_deploy")
+        t = s.get_task("L1_device_list")   # 启用题
         assert isinstance(t["expected_answer"], dict)
         assert isinstance(t["tools_required"], list)
         assert isinstance(t["accept_criteria"], dict)
         assert isinstance(t["success_condition"], dict)
         assert t["enabled"] == 1
+        # 停用题 enabled=0（未实测）
+        assert s.get_task("L3_g66_deploy")["enabled"] == 0
         print("import+roundtrip OK")
     finally:
         s.close()

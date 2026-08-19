@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""M4 回归：EvalStore 任务定义 CRUD + generate（task_gen 写库）。"""
+"""M4 回归：EvalStore 任务定义 CRUD + import_papers（papers/*.yaml 导入）。"""
 import sys
 import tempfile
 from pathlib import Path
@@ -32,15 +32,17 @@ with tempfile.TemporaryDirectory() as td:
                    "success_condition": {"type": "file_exists", "path": "x"}})
     check("同 task_id 覆盖", s.get_task("t1")["level"] == "L2" and len(s.list_tasks()) == 1)
 
-    # generate：uu_remote L1-L4 共 4 条
-    gen = s.generate_tasks(["uu_remote"], {}, 1)
-    check("generate 生成 4 条（L1-L4）", len(gen) == 4, f"实际 {len(gen)}")
-    check("generate 含 4 级", {t["level"] for t in gen} == {"L1", "L2", "L3", "L4"})
-    check("list 共 5 条（1+4）", len(s.list_tasks()) == 5, f"实际 {len(s.list_tasks())}")
+    # import_papers：从 papers/*.yaml 导入（23 题）
+    n = len(s.import_papers())
+    check("import_papers 导入 23 题", n == 23, f"实际 {n}")
+    check("list 共 24 条（1+23）", len(s.list_tasks()) == 24, f"实际 {len(s.list_tasks())}")
+    # 停用题（enabled=false）仍在表里，批次过滤由上层 start_batch 处理
+    t = s.get_task("L3_g66_deploy")
+    check("停用题 enabled=0", t["enabled"] == 0)
 
     # delete
     check("delete t1", s.delete_task("t1") is True)
-    check("delete 后 4 条", len(s.list_tasks()) == 4)
+    check("delete 后 23 条", len(s.list_tasks()) == 23)
     check("delete 不存在返回 False", s.delete_task("nope") is False)
 
     s.close()

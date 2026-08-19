@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getTasks, saveTask, deleteTask, generateTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv, getModels, launchTerminal, stopTerminal, listTerminals, listFs } from '../api.js'
+import { getTasks, saveTask, deleteTask, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getEnv, getModels, launchTerminal, stopTerminal, listTerminals, listFs } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const SKILLS = ['uu_remote', 'g66', 'airgattai', 'generic']
@@ -25,7 +25,6 @@ export default function BatchEval() {
   const [batchState, setBatchState] = useState({})
   const [cwd, setCwd] = useState('')
   const [editing, setEditing] = useState(null)
-  const [genDomain, setGenDomain] = useState('uu_remote')
   const [dkToken, setDkToken] = useState('')
   const [dkGroup, setDkGroup] = useState('12')
   const [dkDevices, setDkDevices] = useState([])
@@ -59,11 +58,6 @@ export default function BatchEval() {
     refreshStatus()
   }
   async function doStop() { await stopBatch(); refreshStatus() }
-  async function doGen() {
-    const j = await generateTasks({ domain: genDomain, params: device ? { device } : undefined })
-    setInfo(j.ok ? `已生成 ${j.generated} 个任务（${genDomain} L1-L4${device ? ' · ' + device : ''}）` : (j.error || '生成失败'))
-    refresh()
-  }
   async function doSave() {
     const j = await saveTask(editing)
     if (j.ok) { setEditing(null); refresh(); setInfo('任务已保存') }
@@ -179,13 +173,8 @@ export default function BatchEval() {
       </div>
 
       <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-        <label>生成任务</label>
-        <select value={genDomain} onChange={e => setGenDomain(e.target.value)}>
-          {SKILLS.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <button className="ghost" onClick={doGen}>一键生成 L1-L4</button>
         <button className="ghost" onClick={() => setEditing({
-          task_id: '', level: 'L1', skill_expected: genDomain, query: '', repeat: null,
+          task_id: '', level: 'L1', skill_expected: skill, query: '', repeat: null,
           success_condition: { type: 'evidence_anchor', anchors: [], threshold: 1 }, note: '',
         })}>新建任务</button>
       </div>

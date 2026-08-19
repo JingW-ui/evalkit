@@ -913,14 +913,6 @@ class EvalServer:
         return {"ok": True} if self._records.delete_task(task_id) \
             else {"ok": False, "error": "任务不存在"}
 
-    def gen_tasks(self, params: dict) -> dict:
-        domains = [d.strip() for d in (params.get("domain") or "").split(",") if d.strip()]
-        if not domains:
-            return {"ok": False, "error": "缺少 domain"}
-        tasks = self._records.generate_tasks(domains, params.get("params"),
-                                             int(params.get("count") or 1))
-        return {"ok": True, "generated": len(tasks), "tasks": tasks}
-
     def _dk_default_token(self) -> str:
         """从 airgattai config.yaml 读 dk.token（兜底，前端未填时自动复用）。"""
         try:
@@ -948,7 +940,7 @@ class EvalServer:
             base = os.environ.get("DK_BASE_URL", "https://devicefarm-airlab.nie.netease.com")
             resp = requests.get(
                 f"{base}/v1/win_dev/",
-                params={"group_id": int(group_id), "page_size": 100},
+                params={"group_id": int(group_id), "page_size": 50},
                 headers={"Authorization": f"Token {token}"},
                 timeout=15,
             )
@@ -1483,8 +1475,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self.server.eval.remove_session(body.get("session_id", "")))
         elif self.path == "/api/tasks":
             self._send_json(self.server.eval.save_task(body))
-        elif self.path == "/api/tasks/generate":
-            self._send_json(self.server.eval.gen_tasks(body))
         elif self.path == "/api/dk/devices":
             self._send_json(self.server.eval.fetch_dk_devices(body))
         elif self.path == "/api/batch/start":

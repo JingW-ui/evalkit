@@ -163,13 +163,6 @@ export async function deleteTask(taskId) {
   return r.json()
 }
 
-export async function generateTasks(params) {
-  const r = await fetch(`${BASE}/api/tasks/generate`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
-  })
-  return r.json()
-}
-
 export async function fetchDkDevices(params) {
   const r = await fetch(`${BASE}/api/dk/devices`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),

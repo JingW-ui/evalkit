@@ -214,9 +214,6 @@ class EvalRecords:
     def delete_task(self, task_id) -> bool:
         return self._store.delete_task(task_id)
 
-    def generate_tasks(self, domains, params=None, count=1) -> list:
-        return self._store.generate_tasks(domains, params, count)
-
     def import_papers(self, papers_dir=None) -> list:
         return self._store.import_papers(papers_dir)
 

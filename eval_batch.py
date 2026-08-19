@@ -254,13 +254,6 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="批量评测：生成→执行→判级→矩阵闭环")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # gen：调用 task_gen 生成任务
-    p_gen = sub.add_parser("gen", help="用 task_gen 模板生成任务")
-    p_gen.add_argument("--domain", default="g66,uu_remote,airgattai,generic")
-    p_gen.add_argument("--out", default="tasks/gen")
-    p_gen.add_argument("--count", type=int, default=1)
-    p_gen.add_argument("--params", default=None, help='参数 JSON 串，如 \'{"device":"SN1"}\'')
-
     # run：执行批量任务
     p_run = sub.add_parser("run", help="批量执行+判级+记录+矩阵")
     p_run.add_argument("--tasks-dir", default="tasks/gen", help="任务目录")
@@ -285,20 +278,6 @@ def main(argv=None) -> int:
     p_run.add_argument("--dry-run", action="store_true", help="只列出任务不执行")
 
     args = parser.parse_args(argv)
-
-    if args.cmd == "gen":
-        from task_gen import generate_tasks
-        params = {}
-        if args.params:
-            try:
-                params = json.loads(args.params)
-            except Exception as e:
-                print(f"params JSON 解析失败: {e}", file=sys.stderr)
-                return 1
-        domains = [d.strip() for d in args.domain.split(",") if d.strip()]
-        written = generate_tasks(domains, params, args.out, args.count)
-        print(f"生成 {len(written)} 个任务到 {args.out}")
-        return 0
 
     if args.cmd == "run":
         env = load_env(args.skill) if args.skill else {}
