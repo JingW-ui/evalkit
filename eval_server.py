@@ -232,6 +232,7 @@ class EvalServer:
         self._hidden: set = set()         # session_id 隐藏集（删除 = 列表移除，不删文件）
         self._load_meta()
         self._records = EvalRecords()     # 评测记录（L1-L4 判级 + 矩阵）
+        self._import_papers()             # 题库权威源 papers/*.yaml → SQLite tasks 快照
         self._lock = threading.Lock()
         self._job: threading.Thread | None = None
         self._cancel: threading.Event | None = None
@@ -859,6 +860,33 @@ class EvalServer:
 
     # ---- 任务定义 + 批量评测（前端批量评测入口） ----
 
+    def _import_papers(self) -> int:
+        """题库权威源 papers/*.yaml → SQLite tasks 快照（幂等 upsert，启动时同步）。"""
+        try:
+            return len(self._records.import_papers())
+        except Exception as exc:
+            print(f"papers 导入失败: {exc}")
+            return 0
+
+    def _write_paper(self, task: dict) -> str | None:
+        """把题目写回 papers/<level>/<task_id>.yaml（只写文件，不 commit）。"""
+        try:
+            import yaml
+            d = dict(task)
+            for k in ("created_at", "updated_at", "_file"):
+                d.pop(k, None)
+            d.setdefault("version", "1")
+            lv = (d.get("level") or "L1").strip()
+            d_dir = Path(__file__).parent / "papers" / lv
+            d_dir.mkdir(parents=True, exist_ok=True)
+            path = d_dir / f"{d['task_id']}.yaml"
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(d, f, allow_unicode=True, sort_keys=False,
+                               default_flow_style=False)
+            return str(path)
+        except Exception:
+            return None
+
     def list_tasks(self) -> dict:
         return {"tasks": self._records.list_tasks()}
 
@@ -866,7 +894,10 @@ class EvalServer:
         if not task.get("task_id"):
             return {"ok": False, "error": "缺少 task_id"}
         self._records.upsert_task(task)
-        return {"ok": True, "task": self._records.get_task(task["task_id"])}
+        paper = self._write_paper(task)
+        return {"ok": True, "task": self._records.get_task(task["task_id"]),
+                "paper": paper,
+                "note": "已写入 YAML，待人工 git commit" if paper else "写回 YAML 失败（仍已入库）"}
 
     def remove_task(self, task_id: str) -> dict:
         return {"ok": True} if self._records.delete_task(task_id) \
@@ -1463,6 +1494,7 @@ class Handler(BaseHTTPRequestHandler):
                 success=body.get("success"),
                 note=body.get("note"),
                 reset=bool(body.get("reset", False)),
+                defense=body.get("defense"),
             )
             if r is None:
                 self._send_json({"error": "session not found"}, 404)

@@ -54,12 +54,20 @@ CREATE INDEX IF NOT EXISTS idx_exec_agent_level ON executions(agent, level);
 CREATE INDEX IF NOT EXISTS idx_exec_task ON executions(task_id, run_idx);
 CREATE TABLE IF NOT EXISTS tasks (
     task_id TEXT PRIMARY KEY,
+    title TEXT,
     level TEXT,
     skill_expected TEXT,
     query TEXT,
-    repeat INTEGER DEFAULT 1,
+    device_var TEXT,
+    expected_answer TEXT,
+    tools_required TEXT,
+    accept_criteria TEXT,
     success_condition TEXT,
+    prep TEXT,
+    version TEXT,
+    repeat INTEGER DEFAULT 1,
     note TEXT,
+    enabled INTEGER DEFAULT 1,
     created_at INTEGER,
     updated_at INTEGER
 );
@@ -89,7 +97,7 @@ class EvalStore:
         self._lock = threading.Lock()
 
     def _migrate(self) -> None:
-        """老库补列（幂等）：executions 缺的统计列 ALTER TABLE ADD COLUMN。"""
+        """老库补列（幂等）：executions / tasks 缺的列 ALTER TABLE ADD COLUMN。"""
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(executions)")}
         for col, typ in {
             "tool_success": "INTEGER", "tool_fail": "INTEGER",
@@ -98,6 +106,16 @@ class EvalStore:
         }.items():
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE executions ADD COLUMN {col} {typ}")
+        # tasks 表新增字段（题库试卷化）
+        tcols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
+        for col, typ in {
+            "title": "TEXT", "device_var": "TEXT",
+            "expected_answer": "TEXT", "tools_required": "TEXT",
+            "accept_criteria": "TEXT", "prep": "TEXT", "version": "TEXT",
+            "enabled": "INTEGER",
+        }.items():
+            if col not in tcols:
+                self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typ}")
         self._conn.commit()
 
     def close(self) -> None:
@@ -183,6 +201,18 @@ class EvalStore:
         var = sum((x - mean) ** 2 for x in xs) / (n - 1)
         return mean, var ** 0.5
 
+    @staticmethod
+    def _wilson_lower(success: int, n: int, z: float = 1.96) -> float | None:
+        """二项成功率的 95% Wilson 置信区间下界（n=0 返回 None）。"""
+        if n <= 0:
+            return None
+        p = success / n
+        z2 = z * z
+        denom = 1 + z2 / n
+        center = (p + z2 / (2 * n)) / denom
+        half = z * ((p * (1 - p) / n + z2 / (4 * n * n)) ** 0.5) / denom
+        return max(0.0, center - half)
+
     def stats(self) -> dict:
         """统计总览：按 task 聚合 n 次执行，SR + 均值±σ（样本标准差）。
 
@@ -190,7 +220,9 @@ class EvalStore:
         duration_ms/duration_sd + cost_cny/cost_sd/cost_sum + tool_sr/tool_sr_sd +
         tool_calls/tool_calls_sd + input_tokens/input_sd + human_interventions。
         """
-        recs = [r for r in self.all() if r.get("task_id")]
+        recs = [r for r in self.all()
+                if r.get("task_id") and r.get("review_status") != "invalid"]
+        task_map = {t["task_id"]: t for t in self.list_tasks()}
         groups = {}
         for r in recs:
             key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"), r.get("model"))
@@ -212,6 +244,10 @@ class EvalStore:
             tools, tools_sd = self._mean_sd([r.get("tool_calls_total") for r in rs])
             tin, tin_sd = self._mean_sd([r.get("input_tokens") for r in rs])
             inter, _ = self._mean_sd([r.get("human_interventions") for r in rs])
+            ci_lower = self._wilson_lower(success, n)
+            ac = (task_map.get(task_id) or {}).get("accept_criteria") or {}
+            veto = bool(ac.get("veto")) if isinstance(ac, dict) else (level == "L4")
+            veto_hit = bool(veto and success < n)
             rows.append({
                 "task_id": task_id, "skill_expected": skill, "level": level, "agent": agent, "model": model,
                 "n": n, "success": success,
@@ -228,12 +264,17 @@ class EvalStore:
                 "input_tokens": round(tin) if tin is not None else None,
                 "input_sd": round(tin_sd) if tin_sd is not None else None,
                 "human_interventions": round(inter, 2) if inter is not None else None,
+                "ci_lower": round(ci_lower, 3) if ci_lower is not None else None,
+                "veto": veto, "veto_hit": veto_hit,
             })
         return {"rows": rows}
 
-    def review(self, session_id: str, level=None, success=None, note=None, reset=False) -> dict | None:
-        """人工复核：修正 level/success（保留自动值，留痕）。reset=True 重置为自动值。
+    def review(self, session_id: str, level=None, success=None, note=None, reset=False,
+               defense=None) -> dict | None:
+        """人工复核/答辩：修正 level/success（保留自动值，留痕）。
 
+        defense 归因结论：'fail'（计入失败，不改值）、'pass'（机器误判，纠正 success=1）、
+        'invalid'（题目硬伤，排除统计）。reset=True 重置为自动值。
         返回更新后的记录；session 不存在返回 None。
         """
         with self._lock:
@@ -246,6 +287,15 @@ class EvalStore:
                 d["level"] = d.get("level_auto")
                 d["success"] = d.get("success_auto")
                 d["review_status"] = "unreviewed"
+            elif defense == "invalid":
+                d["review_status"] = "invalid"
+            elif defense == "pass":
+                if d.get("success_auto") is None:
+                    d["success_auto"] = d.get("success")
+                d["success"] = 1
+                d["review_status"] = "corrected"
+            elif defense == "fail":
+                d["review_status"] = "reviewed"
             else:
                 changed = False
                 if level is not None:
@@ -275,21 +325,33 @@ class EvalStore:
 
     # ---- 任务定义（tasks 表） ----
 
-    _TASK_FIELDS = ["task_id", "level", "skill_expected", "query", "repeat",
-                    "success_condition", "note", "created_at", "updated_at"]
+    _TASK_FIELDS = ["task_id", "title", "level", "skill_expected", "query",
+                    "device_var", "expected_answer", "tools_required",
+                    "accept_criteria", "success_condition", "prep", "version",
+                    "repeat", "note", "enabled", "created_at", "updated_at"]
+
+    @staticmethod
+    def _parse_task_json(d: dict) -> dict:
+        """tasks 的 JSON 串字段还原为 dict/list（容错；缺省给空结构）。"""
+        for k, empty in (("success_condition", {}), ("expected_answer", {}),
+                         ("accept_criteria", {}), ("tools_required", [])):
+            v = d.get(k)
+            if isinstance(v, str):
+                try:
+                    d[k] = json.loads(v)
+                except Exception:
+                    d[k] = empty
+            elif v is None:
+                d[k] = empty
+        return d
 
     def list_tasks(self) -> list:
-        """列任务定义（success_condition 还原为 dict）。"""
+        """列任务定义（JSON 串字段还原为 dict/list）。"""
         with self._lock:
             rows = self._conn.execute("SELECT * FROM tasks ORDER BY task_id").fetchall()
         out = []
         for r in rows:
-            d = dict(r)
-            try:
-                d["success_condition"] = json.loads(d["success_condition"])
-            except Exception:
-                d["success_condition"] = {}
-            out.append(d)
+            out.append(self._parse_task_json(dict(r)))
         return out
 
     def get_task(self, task_id: str) -> dict | None:
@@ -297,22 +359,22 @@ class EvalStore:
             row = self._conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         if row is None:
             return None
-        d = dict(row)
-        try:
-            d["success_condition"] = json.loads(d["success_condition"])
-        except Exception:
-            d["success_condition"] = {}
-        return d
+        return self._parse_task_json(dict(row))
 
     def upsert_task(self, task: dict) -> dict:
-        """创建/更新任务（task_id 主键），success_condition 序列化为 JSON 串。"""
+        """创建/更新任务（task_id 主键）；dict/list 字段序列化为 JSON 串。"""
         t = dict(task)
-        if isinstance(t.get("success_condition"), dict):
-            t["success_condition"] = json.dumps(t["success_condition"], ensure_ascii=False)
+        for k in ("success_condition", "expected_answer", "accept_criteria"):
+            if isinstance(t.get(k), (dict, list)):
+                t[k] = json.dumps(t[k], ensure_ascii=False)
+        if isinstance(t.get("tools_required"), list):
+            t["tools_required"] = json.dumps(t["tools_required"], ensure_ascii=False)
         now = int(time.time() * 1000)
         t["updated_at"] = now
         if t.get("created_at") is None:
             t["created_at"] = now
+        if t.get("enabled") is None:
+            t["enabled"] = 1
         cols = ", ".join(self._TASK_FIELDS)
         ph = ", ".join("?" for _ in self._TASK_FIELDS)
         sql = f"INSERT OR REPLACE INTO tasks ({cols}) VALUES ({ph})"
@@ -331,6 +393,14 @@ class EvalStore:
         """按 skill(域) 生成 L1-L4 任务并写入 tasks 表，返回生成的任务列表。"""
         from task_gen import build_tasks
         tasks = build_tasks(domains, params or {}, count)
+        for t in tasks:
+            self.upsert_task(t)
+        return tasks
+
+    def import_papers(self, papers_dir=None) -> list:
+        """装载 papers/*.yaml（题库权威源）并 upsert 到 tasks 表，返回导入的任务列表。"""
+        from task_gen import load_papers
+        tasks = load_papers(papers_dir)
         for t in tasks:
             self.upsert_task(t)
         return tasks

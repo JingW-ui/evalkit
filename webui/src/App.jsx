@@ -8,6 +8,7 @@ import RawLog from './components/RawLog.jsx'
 import EvalMatrix from './components/EvalMatrix.jsx'
 import StatsPanel from './components/StatsPanel.jsx'
 import BatchEval from './components/BatchEval.jsx'
+import TaskBank from './components/TaskBank.jsx'
 import Inspector from './components/Inspector.jsx'
 import { buildReportHtml } from './exportHtml.js'
 
@@ -228,6 +229,7 @@ export default function App() {
             <button className={`mode ${viewMode === 'batch' ? 'active' : ''}`} onClick={() => setViewMode('batch')}>批量评测</button>
             <button className={`mode ${viewMode === 'matrix' ? 'active' : ''}`} onClick={() => setViewMode('matrix')}>评测矩阵</button>
             <button className={`mode ${viewMode === 'stats' ? 'active' : ''}`} onClick={() => setViewMode('stats')}>统计总览</button>
+            <button className={`mode ${viewMode === 'bank' ? 'active' : ''}`} onClick={() => setViewMode('bank')}>题库</button>
           </span>
           {cur && (
             <span className="cur mono">
@@ -240,6 +242,8 @@ export default function App() {
 
         {viewMode === 'stats' ? (
           <StatsPanel onOpenSession={openSessionFromStats} />
+        ) : viewMode === 'bank' ? (
+          <TaskBank />
         ) : viewMode === 'matrix' ? (
           <EvalMatrix />
         ) : (

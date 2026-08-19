@@ -26,6 +26,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 
 # ---------- 模板定义 ----------
 # 每个域：level → 模板列表。
@@ -261,10 +263,45 @@ def generate_tasks(domains: list[str], params: dict, out_dir: str | Path,
     return written
 
 
+def load_papers(papers_dir: str | Path = None) -> list:
+    """装载 papers/*.yaml（题库权威源），返回题目 dict 列表（跳过缺 task_id 的坏文件）。"""
+    papers_dir = Path(papers_dir) if papers_dir else Path(__file__).parent / "papers"
+    if not papers_dir.is_dir():
+        return []
+    tasks: list = []
+    for p in sorted(papers_dir.rglob("*.yaml")):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = yaml.safe_load(f) or {}
+        except Exception as exc:
+            print(f"task_gen: 跳过 {p}（解析失败: {exc}）", file=sys.stderr)
+            continue
+        if not isinstance(d, dict) or not d.get("task_id"):
+            print(f"task_gen: 跳过 {p}（缺 task_id）", file=sys.stderr)
+            continue
+        tasks.append(d)
+    return tasks
+
+
+def import_papers(papers_dir: str | Path = None, db_path=None) -> int:
+    """装载 papers/*.yaml 并导入 SQLite tasks 表，返回导入条数（幂等 upsert）。"""
+    from eval_store import EvalStore
+    store = EvalStore(db_path)
+    try:
+        n = 0
+        for t in load_papers(papers_dir):
+            store.upsert_task(t)
+            n += 1
+        return n
+    finally:
+        store.close()
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="模板参数化 L1-L4 评测任务生成器")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("preview", help="预览全部模板（不写文件）")
+    sub.add_parser("import", help="装载 papers/*.yaml 导入 SQLite tasks 表")
     p_gen = sub.add_parser("gen", help="生成任务文件")
     p_gen.add_argument("--domain", default="g66,uu_remote,airgattai,generic", help="逗号分隔的域")
     p_gen.add_argument("--out", default="tasks/gen", help="输出目录")
@@ -275,6 +312,10 @@ def main(argv=None) -> int:
 
     if args.cmd == "preview":
         print(preview_templates())
+        return 0
+    if args.cmd == "import":
+        n = import_papers()
+        print(f"已导入 {n} 个题目（papers/*.yaml → SQLite tasks）")
         return 0
     params = {}
     if args.params:

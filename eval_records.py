@@ -199,8 +199,8 @@ class EvalRecords:
     def stats(self) -> dict:
         return self._store.stats()
 
-    def review(self, session_id, level=None, success=None, note=None, reset=False):
-        return self._store.review(session_id, level, success, note, reset)
+    def review(self, session_id, level=None, success=None, note=None, reset=False, defense=None):
+        return self._store.review(session_id, level, success, note, reset, defense)
 
     def list_tasks(self) -> list:
         return self._store.list_tasks()
@@ -216,6 +216,9 @@ class EvalRecords:
 
     def generate_tasks(self, domains, params=None, count=1) -> list:
         return self._store.generate_tasks(domains, params, count)
+
+    def import_papers(self, papers_dir=None) -> list:
+        return self._store.import_papers(papers_dir)
 
     def close(self) -> None:
         """关闭底层 SQLite 连接（释放文件句柄，便于临时目录/服务退出清理）。"""

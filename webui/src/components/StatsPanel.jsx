@@ -86,7 +86,15 @@ export default function StatsPanel({ onOpenSession }) {
                 <td><span className="badge" style={{ background: (LEVEL_COLOR[r.level] || '#6e7681') + '33', color: LEVEL_COLOR[r.level] || '#6e7681' }}>{r.level || '?'}</span></td>
                 <td className="num">{r.n}</td>
                 <td className="num" style={{ color: r.sr >= 0.8 ? 'var(--green)' : r.sr >= 0.5 ? 'var(--yellow)' : 'var(--red)' }}>
-                  {fmtPct(r.sr)}<span style={{ fontSize: 9, color: 'var(--ink3)' }}> {r.success}/{r.n}</span>
+                  {fmtPct(r.sr)}
+                  <span style={{ fontSize: 9, color: 'var(--ink3)' }}> {r.success}/{r.n}{r.ci_lower != null ? ` · ≥${(r.ci_lower * 100).toFixed(0)}%` : ''}</span>
+                  {r.veto && (
+                    <span title={r.veto_hit ? 'L4 一票否决：出现幻觉成功，本次验收不通过' : 'L4 诚实题（一票否决）'}
+                      style={{ marginLeft: 4, padding: '0 4px', borderRadius: 4, fontSize: 10,
+                        background: r.veto_hit ? '#cf222e' : '#6e7681', color: '#fff' }}>
+                      veto{r.veto_hit ? '!' : ''}
+                    </span>
+                  )}
                 </td>
                 <td className="num">{fmtSD(Math.round(r.duration_ms / 1000), r.duration_sd != null ? Math.round(r.duration_sd / 1000) : null)}</td>
                 <td className="num">{r.cost_cny != null ? r.cost_cny.toFixed(3) + (r.cost_sd != null ? ' ± ' + r.cost_sd.toFixed(3) : '') : '—'}</td>
@@ -158,8 +166,13 @@ function ReviewRow({ e, reviewing, setReviewing, saveReview, onOpenSession }) {
           <>
             <button className="ghost" onClick={() => onOpenSession && onOpenSession(e.session_id)}>轨迹</button>
             <button className="ghost" onClick={() => setReviewing(e.session_id)}>
-              复核{e.review_status === 'corrected' ? '·已修正' : ''}
+              复核{e.review_status === 'corrected' ? '·已修正' : e.review_status === 'invalid' ? '·无效' : ''}
             </button>
+            <span title="答辩归因（fail/pass/invalid）" style={{ opacity: 0.85 }}>
+              <button className="ghost" title="pass：机器误判，纠正为成功" onClick={() => saveReview(e.session_id, { defense: 'pass' })}>✓</button>
+              <button className="ghost" title="fail：agent 能力问题，计入失败" onClick={() => saveReview(e.session_id, { defense: 'fail' })}>✗</button>
+              <button className="ghost" title="invalid：题目硬伤，排除统计" onClick={() => saveReview(e.session_id, { defense: 'invalid' })}>∅</button>
+            </span>
           </>
         )}
       </td>
