@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { getTasks, startBatch, stopBatch, getBatchStatus, fetchDkDevices, getModels, launchTerminal, stopTerminal, listTerminals, listFs } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
@@ -43,22 +43,31 @@ export default function BatchEval() {
   const allIds = tasks.map(t => t.task_id)
   const selectedIds = selected === null ? allIds : [...selected]
   const filteredIds = filtered.map(t => t.task_id)
-  const allChecked = filteredIds.length > 0 && filteredIds.every(id => selectedIds.includes(id))
+  // 全选/部分选：只看当前筛选集（selected===null 视为全选）
+  const selInFilter = filteredIds.filter(id => selectedIds.includes(id)).length
+  const allChecked = filteredIds.length > 0 && selInFilter === filteredIds.length
+  const partialChecked = selInFilter > 0 && selInFilter < filteredIds.length
+  const allRef = useRef(null)
+  useEffect(() => { if (allRef.current) allRef.current.indeterminate = partialChecked }, [partialChecked])
 
   function toggle(tid) {
     setSelected(prev => {
-      const base = prev === null ? new Set(allIds) : new Set(prev)
+      const base = new Set(prev ?? allIds)
       if (base.has(tid)) base.delete(tid); else base.add(tid)
       return base
     })
   }
   function toggleAll() {
     setSelected(prev => {
-      const base = prev === null ? new Set(allIds) : new Set(prev)
-      const allSel = filteredIds.every(id => base.has(id))
-      const next = new Set(base)
-      filteredIds.forEach(id => allSel ? next.delete(id) : next.add(id))
-      return next
+      const base = new Set(prev ?? allIds)
+      // 基于当前状态判断：筛选集是否已全选（而非渲染期的 allChecked，避免闭包陈旧）
+      const allSel = filteredIds.length > 0 && filteredIds.every(id => base.has(id))
+      if (allSel) {
+        filteredIds.forEach(id => base.delete(id))   // 全选 → 取消筛选集
+      } else {
+        filteredIds.forEach(id => base.add(id))      // 部分/未选 → 选中筛选集（不动筛选集之外）
+      }
+      return base
     })
   }
 
@@ -180,7 +189,7 @@ export default function BatchEval() {
       {info && <div className="info">{info}</div>}
 
       <div className="launcher-row" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-        <label><input type="checkbox" checked={allChecked} onChange={toggleAll} /> 全选</label>
+        <label><input type="checkbox" checked={allChecked} ref={allRef} onChange={toggleAll} /> 全选</label>
         <label style={{ width: 'auto' }}>skill</label>
         <select value={fSkill} onChange={e => setFSkill(e.target.value)}><option value="">全部</option>{skills.map(s => <option key={s} value={s}>{s}</option>)}</select>
         <label style={{ width: 'auto' }}>级别</label>
