@@ -18,7 +18,7 @@ def _tmp_db():
 
 def test_load_papers():
     ts = load_papers()
-    assert len(ts) == 21, f"expected 21, got {len(ts)}"
+    assert len(ts) == 23, f"expected 23, got {len(ts)}"
     by_id = {t["task_id"]: t for t in ts}
     assert "L3_g66_deploy" in by_id
     assert by_id["L3_g66_deploy"]["expected_answer"]["result"]  # result 必填
@@ -31,7 +31,7 @@ def test_roundtrip_new_fields():
     s = EvalStore(_tmp_db())
     try:
         n = len(s.import_papers())
-        assert n == 21, n
+        assert n == 23, n
         t = s.get_task("L3_g66_deploy")
         assert isinstance(t["expected_answer"], dict)
         assert isinstance(t["tools_required"], list)

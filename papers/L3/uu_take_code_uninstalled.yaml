@@ -35,11 +35,9 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell}
-    - type: any
-      rules:
-        - {type: tool_result, tool: shell, contains: "DEVICE_ID="}
-        - {type: tool_result, tool: shell, contains: "DK 备注更新成功"}
+    - {type: tool_called, tool: occupy_device}
+    - {type: text_contains, any_of: ["DEVICE_ID", "设备 ID"]}
+    - {type: text_contains, any_of: ["DK 备注"]}
 prep: "未安装 UU"
 version: "1"
 enabled: true
