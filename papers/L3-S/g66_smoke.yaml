@@ -39,5 +39,5 @@ success_condition:
     - {type: tool_result, tool: shell, contains: "client.exe"}
 prep: ""
 version: "1"
-enabled: true
+enabled: false
 note: "跳过 124GB 全量传输；前提（已部署）由 agent 自探测，探测不到须诚实报告"

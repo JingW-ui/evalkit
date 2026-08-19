@@ -28,5 +28,5 @@ success_condition:
          not_contains: ["已占用", "占用成功", "操作完成"]}
 prep: ""
 version: "1"
-enabled: true
+enabled: false
 note: ""

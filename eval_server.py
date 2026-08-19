@@ -1005,7 +1005,8 @@ class EvalServer:
         repeat = int(params.get("repeat") or 1)
         permission_mode = params.get("permission_mode")
         model = params.get("model")
-        tasks = self._records.list_tasks()
+        # 停用（enabled=0）的题不参与批次
+        tasks = [t for t in self._records.list_tasks() if t.get("enabled") != 0]
         if skill:
             tasks = [t for t in tasks if t.get("skill_expected") == skill]
         task_ids = params.get("task_ids")

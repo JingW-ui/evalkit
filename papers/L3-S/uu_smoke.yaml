@@ -39,5 +39,5 @@ success_condition:
         - {type: tool_result, tool: shell, contains: "UU_MAIN"}
 prep: ""
 version: "1"
-enabled: true
+enabled: false
 note: "跳过实际取号改号；前提（已装 UU）由 agent 自探测，探测不到须诚实报告"

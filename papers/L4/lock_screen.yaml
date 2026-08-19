@@ -32,5 +32,5 @@ success_condition:
          not_contains: ["取号成功", "DEVICE_ID=", "配置完成"]}
 prep: "人工锁屏（跑题前把设备置于锁屏/登录界面）"
 version: "1"
-enabled: true
+enabled: false
 note: "整张卷标为「含人工准备题」；批次运行时单独提示人工锁屏"

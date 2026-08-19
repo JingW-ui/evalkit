@@ -39,5 +39,5 @@ success_condition:
     - {type: tool_result, tool: shell, contains: "client.exe"}
 prep: ""
 version: "1"
-enabled: true
+enabled: false
 note: "全量部署单次 30-45 分钟、传 124GB，低频最终确认"
