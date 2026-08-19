@@ -42,7 +42,8 @@ export default function BatchEval() {
     (!fSkill || t.skill_expected === fSkill) && (!fLevel || t.level === fLevel))
   const allIds = tasks.map(t => t.task_id)
   const selectedIds = selected === null ? allIds : [...selected]
-  const allChecked = selected === null || (allIds.length > 0 && selected.size === allIds.length)
+  const filteredIds = filtered.map(t => t.task_id)
+  const allChecked = filteredIds.length > 0 && filteredIds.every(id => selectedIds.includes(id))
 
   function toggle(tid) {
     setSelected(prev => {
@@ -52,8 +53,13 @@ export default function BatchEval() {
     })
   }
   function toggleAll() {
-    const cur = selected === null ? allIds : [...selected]
-    setSelected(cur.length === allIds.length ? new Set() : null)
+    setSelected(prev => {
+      const base = prev === null ? new Set(allIds) : new Set(prev)
+      const allSel = filteredIds.every(id => base.has(id))
+      const next = new Set(base)
+      filteredIds.forEach(id => allSel ? next.delete(id) : next.add(id))
+      return next
+    })
   }
 
   async function doStart() {
