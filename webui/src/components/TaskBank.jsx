@@ -193,10 +193,12 @@ function TaskForm({ form, setForm, editing, onSubmit, onCancel, refData }) {
         <label>级别 <select value={form.level} onChange={e => set('level', e.target.value)}>{LEVELS.map(l => <option key={l} value={l}>{l}</option>)}</select></label>
         <label>skill <select value={form.skill_expected} onChange={e => set('skill_expected', e.target.value)}>{SKILLS.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
       </div>
-      <div className="launcher-row" style={{ flexWrap: 'wrap' }}>
-        <label style={{ flex: 1 }}>query <input value={form.query} onChange={e => set('query', e.target.value)} placeholder="部署组内 G66 资源到设备 {device}..." /></label>
-        <label>设备变量 <input value={form.device_var} onChange={e => set('device_var', e.target.value)} /></label>
-      </div>
+      <label style={{ display: 'block', margin: '8px 0' }}>query（输入 prompt）
+        <textarea rows={2} style={{ width: '100%', boxSizing: 'border-box', display: 'block', textAlign: 'left' }} value={form.query} onChange={e => set('query', e.target.value)} placeholder="部署组内 G66 资源到设备 {device}..." />
+      </label>
+      <label style={{ display: 'block', margin: '8px 0' }}>设备变量（device_var）
+        <input style={{ width: '100%', boxSizing: 'border-box', display: 'block', textAlign: 'left' }} value={form.device_var} onChange={e => set('device_var', e.target.value)} placeholder="{device}" />
+      </label>
       <label style={{ display: 'block', margin: '8px 0' }}>参考结论 · 最终结果（result，主判据）
         <textarea rows={2} style={{ width: '100%' }} value={form.result} onChange={e => set('result', e.target.value)} placeholder="client.exe 进程在目标机运行..." />
       </label>
