@@ -97,7 +97,7 @@ export default function TaskBank() {
       {msg && <div className="warnbox" style={{ padding: '6px 10px' }}>{msg}</div>}
 
       {editing ? (
-        <TaskForm form={form} setForm={setForm} editing={editing} onSubmit={submit} onCancel={cancel} />
+        <TaskForm form={form} setForm={setForm} editing={editing} onSubmit={submit} onCancel={cancel} refData={refs[editing]} />
       ) : (
         <table style={{ tableLayout: 'fixed' }}>
           <colgroup>
@@ -166,12 +166,27 @@ function RefRow({ refData }) {
   )
 }
 
-function TaskForm({ form, setForm, editing, onSubmit, onCancel }) {
+function TaskForm({ form, setForm, editing, onSubmit, onCancel, refData }) {
   const set = (k, v) => setForm({ ...form, [k]: v })
   const showProcess = form.level === 'L3' || form.level === 'L3-S'
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 12 }}>
       <h3 style={{ margin: '0 0 10px' }}>{editing === 'new' ? '新增题目' : `编辑 ${editing}`}</h3>
+      {refData && (
+        <div style={{ fontSize: 12, border: '1px solid var(--border)', borderRadius: 6, padding: 8, marginBottom: 12, background: 'var(--bg2)' }}>
+          <div style={{ marginBottom: 6, fontWeight: 600 }}>参考结论（实测）</div>
+          <div style={{ marginBottom: 6 }}>
+            <span className="muted">模型 </span>{esc(refData.model || '—')}
+            <span className="muted" style={{ marginLeft: 12 }}>工具链 </span>
+            {(refData.tools || []).map((n, i) => (
+              <span key={i} className="badge" style={{ marginRight: 3, background: '#6e7681' + '22', color: '#6e7681' }}>{esc(n)}</span>
+            ))}
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', color: 'var(--ink2)' }}>
+            {esc(refData.content)}
+          </div>
+        </div>
+      )}
       <div className="launcher-row" style={{ flexWrap: 'wrap' }}>
         <label>task_id <input value={form.task_id} disabled={editing !== 'new'} onChange={e => set('task_id', e.target.value)} placeholder="L3_g66_deploy" /></label>
         <label>题目名 <input value={form.title} onChange={e => set('title', e.target.value)} /></label>
@@ -181,9 +196,8 @@ function TaskForm({ form, setForm, editing, onSubmit, onCancel }) {
       <div className="launcher-row" style={{ flexWrap: 'wrap' }}>
         <label style={{ flex: 1 }}>query <input value={form.query} onChange={e => set('query', e.target.value)} placeholder="部署组内 G66 资源到设备 {device}..." /></label>
         <label>设备变量 <input value={form.device_var} onChange={e => set('device_var', e.target.value)} /></label>
-        <label>前置准备 <input value={form.prep} onChange={e => set('prep', e.target.value)} placeholder="人工锁屏（可选）" /></label>
       </div>
-      <label style={{ display: 'block', margin: '8px 0' }}>参考答辩 · 最终结果（result，主判据）
+      <label style={{ display: 'block', margin: '8px 0' }}>参考结论 · 最终结果（result，主判据）
         <textarea rows={2} style={{ width: '100%' }} value={form.result} onChange={e => set('result', e.target.value)} placeholder="client.exe 进程在目标机运行..." />
       </label>
       {showProcess && (
