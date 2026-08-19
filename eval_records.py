@@ -12,6 +12,7 @@ eval_records.py — 评测记录与 L1-L4 判级（R4：评测矩阵）。
 """
 
 import json
+import operator
 import time
 from pathlib import Path
 
@@ -99,6 +100,173 @@ def _validate_file(task: dict, metrics: dict) -> tuple:
     return ok, "file_exists(近似)"
 
 
+# ---------- 组合规则树评估器（success_condition = all/any/not + 原子条件） ----------
+
+def _strip_mcp(name: str) -> str:
+    """剥 MCP 前缀：mcp__<server>__xxx → xxx；本地工具（Bash/Grep/Read/...）保留原名。"""
+    if not name:
+        return ""
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) == 3:
+            return parts[2]
+    return name
+
+
+def _collect_tools(metrics: dict) -> dict:
+    """从 metrics.tasks[].tools[] 提取工具链证据：归一化名 → [{args,result,ok}, ...]。"""
+    tools: dict = {}
+    for t in (metrics.get("tasks") or []):
+        for tool in (t.get("tools") or []):
+            name = _strip_mcp(tool.get("name", ""))
+            if name:
+                tools.setdefault(name, []).append(tool)
+    return tools
+
+
+def _as_list(v):
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [v]
+    return list(v)
+
+
+def _evaluate_atomic(rule: dict, ctx: dict) -> bool:
+    """评估原子条件。ctx = {metrics, text, tools}。"""
+    metrics = ctx["metrics"]
+    text = ctx["text"]
+    tools = ctx["tools"]
+    rtype = rule.get("type")
+
+    if rtype == "tool_called":
+        name = _strip_mcp(rule.get("tool") or "")
+        if not name:
+            return False
+        calls = tools.get(name, [])
+        if not calls:
+            return False
+        if rule.get("args_contains") and not any(
+                rule["args_contains"] in (c.get("args") or "") for c in calls):
+            return False
+        if rule.get("min_calls") is not None and len(calls) < rule["min_calls"]:
+            return False
+        return True
+
+    if rtype == "tool_result":
+        name = _strip_mcp(rule.get("tool") or "")
+        keys = _as_list(rule.get("contains") or rule.get("any_of"))
+        if not name or not keys:
+            return False
+        min_hits = rule.get("min_hits", 1)
+        hits = sum(1 for c in tools.get(name, [])
+                   if any(k in (c.get("result") or "") for k in keys))
+        return hits >= min_hits
+
+    if rtype == "tool_ok":
+        if rule.get("tool"):
+            calls = tools.get(_strip_mcp(rule["tool"]), [])
+        else:
+            calls = [c for lst in tools.values() for c in lst]
+        return sum(1 for c in calls if c.get("ok")) >= (rule.get("min", 1) or 1)
+
+    if rtype == "tool_success_rate":
+        total = metrics.get("tool_calls_total") or 0
+        success = metrics.get("tool_success") or 0
+        if total <= 0:
+            return False
+        return (success / total) >= (rule.get("min", 0) or 0)
+
+    if rtype == "tool_fail_zero":
+        name = _strip_mcp(rule.get("tool") or "")
+        if not name:
+            return False
+        norm: dict = {}
+        for k, v in (metrics.get("tool_fail_by_name") or {}).items():
+            kk = _strip_mcp(k)
+            norm[kk] = norm.get(kk, 0) + v
+        return norm.get(name, 0) == 0
+
+    if rtype == "text_contains":
+        if _as_list(rule.get("any_of")) and not any(
+                k in text for k in _as_list(rule.get("any_of"))):
+            return False
+        if any(k in text for k in _as_list(rule.get("not_contains"))):
+            return False
+        return True
+
+    if rtype == "metric":
+        name = rule.get("name")
+        value = rule.get("value")
+        if name is None or value is None:
+            return False
+        actual = metrics.get(name)
+        if actual is None:
+            return False
+        fn = {">=": operator.ge, "<=": operator.le, ">": operator.gt,
+              "<": operator.lt, "=": operator.eq, "==": operator.eq}.get(rule.get("op", ">="))
+        if fn is None:
+            return False
+        try:
+            return fn(actual, value)
+        except TypeError:
+            return False
+
+    if rtype == "file_exists":
+        path = rule.get("path")
+        if not path:
+            return False
+        p = Path(path)
+        if not p.is_file():
+            return False
+        if rule.get("min_size") is not None and p.stat().st_size < rule["min_size"]:
+            return False
+        if rule.get("contains"):
+            try:
+                if rule["contains"] not in p.read_text(encoding="utf-8", errors="replace"):
+                    return False
+            except Exception:
+                return False
+        return True
+
+    return False
+
+
+def _evaluate_rule(rule: dict, ctx: dict) -> bool:
+    """评估规则树（all/any/not 组合 + 原子条件）。"""
+    if not isinstance(rule, dict):
+        return False
+    rtype = rule.get("type")
+    if rtype == "all":
+        return all(_evaluate_rule(sub, ctx) for sub in (rule.get("rules") or []))
+    if rtype == "any":
+        return any(_evaluate_rule(sub, ctx) for sub in (rule.get("rules") or []))
+    if rtype == "not":
+        return not _evaluate_rule(rule.get("rule") or {}, ctx)
+    return _evaluate_atomic(rule, ctx)
+
+
+_ATOMIC_TYPES = {"tool_called", "tool_result", "tool_ok", "tool_success_rate",
+                 "tool_fail_zero", "text_contains", "metric", "file_exists"}
+
+
+def _evaluate_success_condition(sc, metrics, text) -> tuple:
+    """评估 success_condition（新规则树/原子条件 + 旧三类型兼容）。返回 (success, by)。"""
+    if not isinstance(sc, dict) or not sc.get("type"):
+        return True, "no_condition"
+    stype = sc.get("type")
+    ctx = {"metrics": metrics or {}, "text": text or ""}
+    ctx["tools"] = _collect_tools(ctx["metrics"])
+    if stype in ("all", "any", "not"):
+        return _evaluate_rule(sc, ctx), f"rule_tree:{stype}"
+    if stype in _ATOMIC_TYPES:
+        return _evaluate_atomic(sc, ctx), f"atomic:{stype}"
+    # 旧三类型兼容
+    if stype == "negative_honesty":
+        return _validate_negative_honesty({"success_condition": sc}, text)
+    return _validate_evidence_anchor({"success_condition": sc}, text)
+
+
 # ---------- 主判定 ----------
 
 def judge_eval(query: str, session_id: str, metrics: dict, assistant_text: str = "",
@@ -121,13 +289,8 @@ def judge_eval(query: str, session_id: str, metrics: dict, assistant_text: str =
 
     if task is not None:
         level = task.get("level", "L?")
-        ctype = (task.get("success_condition") or {}).get("type", "evidence_anchor")
-        if ctype == "negative_honesty":
-            success, by = _validate_negative_honesty(task, assistant_text)
-        elif ctype == "file_exists":
-            success, by = _validate_file(task, metrics)
-        else:
-            success, by = _validate_evidence_anchor(task, assistant_text)
+        success, by = _evaluate_success_condition(
+            task.get("success_condition") or {}, metrics, assistant_text)
         return {
             "level": level, "level_source": "task",
             "level_reason": f"task {task.get('task_id')} · {task.get('_file', '')}",

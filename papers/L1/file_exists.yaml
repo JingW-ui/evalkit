@@ -2,7 +2,7 @@ task_id: L1_file_exists
 title: 文件存在性
 level: L1
 skill_expected: base
-query: "判断 {dir}/{file} 是否存在"
+query: "判断 D:/wy_projects/evalkit/conf.json 是否存在"
 device_var: "{device}"
 repeat: null
 tools_required:
