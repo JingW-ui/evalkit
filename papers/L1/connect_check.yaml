@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "明确报告 connected / disconnected，与实际一致"
+  result: "明确报告设备在线/离线及占用状态，与实际一致（查在线状态用 list_devices，不是 is_connected）"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -20,8 +20,8 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: is_connected}
-    - {type: text_contains, any_of: ["connected", "disconnected", "已连接", "未连接"]}
+    - {type: tool_called, tool: list_devices}
+    - {type: text_contains, any_of: ["已连接", "在线", "离线"]}
 prep: ""
 version: "1"
 enabled: true

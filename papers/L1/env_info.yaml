@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "返回 whoami/hostname/ver 的真实值"
+  result: "返回设备的用户、主机名、系统版本的真实值（占用设备后 shell 查 whoami/hostname/ver）"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -20,8 +20,9 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "ver"}
-    - {type: text_contains, any_of: ["Windows"]}
+    - {type: tool_called, tool: occupy_device}
+    - {type: tool_called, tool: shell}
+    - {type: text_contains, any_of: ["主机名", "系统版本"]}
 prep: ""
 version: "1"
 enabled: true

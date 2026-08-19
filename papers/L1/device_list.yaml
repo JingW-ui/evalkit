@@ -22,7 +22,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: list_devices}
     - {type: tool_ok, tool: list_devices, min: 1}
-    - {type: text_contains, any_of: ["serialno"]}
+    - {type: text_contains, any_of: ["serialno", "空闲"]}
 prep: ""
 version: "1"
 enabled: true

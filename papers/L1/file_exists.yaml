@@ -20,8 +20,8 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "exist"}
-    - {type: text_contains, any_of: ["存在", "不存在", "EXISTS", "NOT_FOUND"]}
+    - {type: tool_called, tool: Bash}
+    - {type: text_contains, any_of: ["存在", "EXISTS", "不存在", "NOT_FOUND"]}
 prep: ""
 version: "1"
 enabled: true

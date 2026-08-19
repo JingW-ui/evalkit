@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "明确报告 RUNNING / NOT_RUNNING，与实际相符"
+  result: "明确报告进程是否在运行，与实际相符（占用设备后 shell 查进程）"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -20,8 +20,9 @@ accept_criteria:
 success_condition:
   type: all
   rules:
+    - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["RUNNING", "NOT_RUNNING", "运行", "未运行"]}
+    - {type: text_contains, any_of: ["未在运行", "未运行", "RUNNING", "NOT_RUNNING"]}
 prep: ""
 version: "1"
 enabled: true

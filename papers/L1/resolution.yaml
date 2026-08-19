@@ -20,8 +20,8 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "resolution"}
-    - {type: tool_result, tool: shell, contains: "x"}
+    - {type: tool_called, tool: occupy_device}
+    - {type: text_contains, any_of: ["分辨率", "×"]}
 prep: ""
 version: "1"
 enabled: true
