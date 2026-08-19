@@ -2,7 +2,7 @@ task_id: L2_process_manage
 title: 进程管理
 level: L2
 skill_expected: base
-query: "重启设备 {device} 上某进程"
+query: "重启设备 {device} 上的 notepad.exe 进程"
 device_var: "{device}"
 repeat: null
 tools_required:
@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "旧进程已停、新进程已起（tasklist 验证），停-起-验闭环"
+  result: "notepad.exe 旧进程已停、新进程已起（tasklist 验证），停-起-验闭环"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -20,8 +20,9 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "taskkill"}
-    - {type: tool_ok, tool: shell, min: 2}
+    - {type: tool_called, tool: occupy_device}
+    - {type: tool_called, tool: shell}
+    - {type: text_contains, any_of: ["已启动", "已重启", "重启完成"]}
 prep: ""
 version: "1"
 enabled: true

@@ -2,7 +2,7 @@ task_id: L2_software_probe
 title: 软件探测
 level: L2
 skill_expected: base
-query: "检查设备 {device} 上某软件是否安装及版本"
+query: "检查设备 {device} 上 GameViewer.exe 是否安装及版本"
 device_var: "{device}"
 repeat: null
 tools_required:
@@ -15,7 +15,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "明确报告已装/未装，版本号可验证（默认路径优先、注册表兜底）"
+  result: "明确报告 GameViewer.exe 已装/未装及版本（默认路径优先、注册表兜底）"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -24,6 +24,7 @@ accept_criteria:
 success_condition:
   type: all
   rules:
+    - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
     - {type: text_contains, any_of: ["已安装", "未安装", "INSTALLED", "NOT_INSTALLED"]}
 prep: ""

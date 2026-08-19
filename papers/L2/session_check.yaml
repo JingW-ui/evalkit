@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "报告 console 会话 Active/异常，结论与 qwinsta 实际输出一致"
+  result: "报告 console 会话 Active/异常，结论与 query session/quser 实际输出一致"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -20,7 +20,8 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "qwinsta"}
+    - {type: tool_called, tool: occupy_device}
+    - {type: tool_called, tool: shell}
     - {type: text_contains, any_of: ["Active", "活动", "console"]}
 prep: ""
 version: "1"
