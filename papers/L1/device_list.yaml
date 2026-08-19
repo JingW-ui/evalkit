@@ -1,0 +1,27 @@
+task_id: L1_device_list
+title: 设备发现
+level: L1
+skill_expected: base
+query: "列出当前可用的空闲 PC 设备"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: list_devices
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "返回在线且空闲的 PC 清单，含 model(主机名)/serialno(UUID)/IP/占用状态，且 model↔serialno 对应关系正确"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["list_devices"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

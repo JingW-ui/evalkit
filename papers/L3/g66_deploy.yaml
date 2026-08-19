@@ -1,0 +1,42 @@
+task_id: L3_g66_deploy
+title: g66 部署（全量）
+level: L3
+skill_expected: g66
+query: "部署组内 G66 资源到设备 {device}，部署完启动游戏并确认进程在跑"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: g66
+    type: skill
+    required: true
+    note: "加载 g66 skill 走部署流程"
+  - tool: list_devices
+    type: mcp
+    required: true
+    note: ""
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "client.exe 进程在目标机运行，start.bat / client.exe / Documents/local_patch 就位"
+  process:
+    - "model→serialno 映射正确，未占用错机器"
+    - "已部署时识别并走增量，未白传全量"
+    - "启动后用 tasklist 验证进程，而非仅凭 start 返回"
+accept_criteria:
+  sr_threshold: 0.6
+  n_min: 3
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["client.exe", "部署验证完成"]
+  threshold: 2
+prep: ""
+version: "1"
+enabled: true
+note: "全量部署单次 30-45 分钟、传 124GB，低频最终确认"

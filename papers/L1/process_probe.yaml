@@ -1,0 +1,27 @@
+task_id: L1_process_probe
+title: 进程探测
+level: L1
+skill_expected: base
+query: "查一下设备 {device} 上 client.exe 是否在运行"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "明确报告 RUNNING / NOT_RUNNING，与实际相符"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["tasklist", "findstr"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

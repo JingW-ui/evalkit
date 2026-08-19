@@ -1,0 +1,27 @@
+task_id: L2_process_manage
+title: 进程管理
+level: L2
+skill_expected: base
+query: "重启设备 {device} 上某进程"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "旧进程已停、新进程已起（tasklist 验证），停-起-验闭环"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["taskkill", "tasklist"]
+  threshold: 2
+prep: ""
+version: "1"
+enabled: true
+note: ""

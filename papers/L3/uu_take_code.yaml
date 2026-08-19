@@ -1,0 +1,42 @@
+task_id: L3_uu_take_code
+title: uu 取号（全量）
+level: L3
+skill_expected: uu_remote
+query: "在设备 {device} 上配置 UU 取号验证码 {code} 并写 DK 备注"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: uu-remote-auto
+    type: skill
+    required: true
+    note: "加载 uu-remote-auto skill 走取号流程"
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+  - tool: dk_note_updater
+    type: local_script
+    required: true
+    note: "写 DK 备注"
+expected_answer:
+  result: "取得真实格式的设备 ID，验证码写入 DK 备注且可回读一致"
+  process:
+    - "连接后 qwinsta 预检 console Active，异常先修复"
+    - "分辨率过低先恢复 / OCR 确认窗口完整"
+    - "取号前确认『允许远程协助』开关有效（避免按钮置灰卡死）"
+accept_criteria:
+  sr_threshold: 0.6
+  n_min: 3
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["DEVICE_ID", "DK"]
+  threshold: 2
+prep: ""
+version: "1"
+enabled: true
+note: "全量取号，低频最终确认"

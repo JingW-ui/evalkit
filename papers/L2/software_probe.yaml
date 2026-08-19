@@ -1,0 +1,31 @@
+task_id: L2_software_probe
+title: 软件探测
+level: L2
+skill_expected: base
+query: "检查设备 {device} 上某软件是否安装及版本"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "明确报告已装/未装，版本号可验证（默认路径优先、注册表兜底）"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["reg", "Test-Path"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

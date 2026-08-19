@@ -1,0 +1,27 @@
+task_id: L2_remote_download
+title: 远程下载
+level: L2
+skill_expected: base
+query: "让设备 {device} 从 {url} 下载文件到指定路径"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "文件落盘，大小与源一致"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["curl", "Invoke-WebRequest"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

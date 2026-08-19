@@ -1,0 +1,27 @@
+task_id: L1_connect_check
+title: 连接确认
+level: L1
+skill_expected: base
+query: "确认设备 {device} 当前是否已连接"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: is_connected
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "明确报告 connected / disconnected，与实际一致"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["is_connected"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

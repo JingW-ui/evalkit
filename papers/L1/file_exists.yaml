@@ -1,0 +1,27 @@
+task_id: L1_file_exists
+title: 文件存在性
+level: L1
+skill_expected: base
+query: "判断 {dir}/{file} 是否存在"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "明确报告存在/不存在，路径与结论一致"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["if exist", "dir", "Test-Path"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

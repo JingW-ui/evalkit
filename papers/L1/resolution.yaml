@@ -1,0 +1,27 @@
+task_id: L1_resolution
+title: 显示分辨率
+level: L1
+skill_expected: base
+query: "报告设备 {device} 当前桌面分辨率"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "返回真实 WxH（非猜测）"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["get_resolution", "resolution"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

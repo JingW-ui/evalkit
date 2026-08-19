@@ -1,0 +1,42 @@
+task_id: L3S_g66_smoke
+title: g66 冒烟
+level: L3-S
+skill_expected: g66
+query: "检查设备 {device} 的 G66 部署状态，做增量校验，然后启动游戏确认进程在跑"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: g66
+    type: skill
+    required: true
+    note: "加载 g66 skill"
+  - tool: list_devices
+    type: mcp
+    required: true
+    note: ""
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "client.exe 进程运行，start.bat / client.exe / Documents/local_patch 就位"
+  process:
+    - "识别已部署→走增量，diff 收敛到全 SKIP"
+    - "传输通道冒烟测试（push 最小文件判 A-P/A-H）"
+    - "tasklist 验证进程"
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 10
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["client.exe"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: "跳过 124GB 全量传输；前提（已部署）由 agent 自探测，探测不到须诚实报告"

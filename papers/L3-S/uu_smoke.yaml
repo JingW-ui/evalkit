@@ -1,0 +1,38 @@
+task_id: L3S_uu_smoke
+title: uu 冒烟
+level: L3-S
+skill_expected: uu_remote
+query: "检查设备 {device} 的 UU 客户端状态，确认会话健康、窗口就绪（不实际取号）"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: uu-remote-auto
+    type: skill
+    required: true
+    note: "加载 uu-remote-auto skill"
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "报告 UU 已安装 + console Active + 窗口 STATUS=UU_MAIN"
+  process:
+    - "qwinsta 预检 console Active"
+    - "分辨率过低先恢复"
+    - "OCR 判定窗口就绪"
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 10
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["STATUS=UU_MAIN"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: "跳过实际取号改号；前提（已装 UU）由 agent 自探测，探测不到须诚实报告"

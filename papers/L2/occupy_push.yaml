@@ -1,0 +1,35 @@
+task_id: L2_occupy_push
+title: 占用+推文件
+level: L2
+skill_expected: base
+query: "占用空闲 PC，把 {file} 推到它的 D:/ 下"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: list_devices
+    type: mcp
+    required: true
+    note: ""
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: push_file
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "文件出现在指定设备指定路径，大小/内容与本地一致，且占用的是点选那台（serialno 对应正确）"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["occupy_device", "push_file"]
+  threshold: 2
+prep: ""
+version: "1"
+enabled: true
+note: ""

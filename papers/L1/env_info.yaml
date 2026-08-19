@@ -1,0 +1,27 @@
+task_id: L1_env_info
+title: 环境信息
+level: L1
+skill_expected: base
+query: "报告设备 {device} 的用户、主机名、系统版本"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "返回 whoami/hostname/ver 的真实值"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["whoami", "hostname"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""

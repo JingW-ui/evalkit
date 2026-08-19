@@ -1,0 +1,27 @@
+task_id: L2_write_read
+title: 写读闭环
+level: L2
+skill_expected: base
+query: "在 {dir} 创建 {file} 写入指定内容，再读回确认"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "文件内容与写入一致，读回可验证"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: file_exists
+  path: "{file}"
+  device: "{device}"
+prep: ""
+version: "1"
+enabled: true
+note: ""

@@ -1,0 +1,27 @@
+task_id: L2_session_check
+title: 会话检查
+level: L2
+skill_expected: base
+query: "检查设备 {device} 的 console 会话是否有 Active 用户"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "报告 console 会话 Active/异常，结论与 qwinsta 实际输出一致"
+  process: []
+accept_criteria:
+  sr_threshold: 0.8
+  n_min: 20
+  veto: false
+success_condition:
+  type: evidence_anchor
+  anchors: ["qwinsta"]
+  threshold: 1
+prep: ""
+version: "1"
+enabled: true
+note: ""
