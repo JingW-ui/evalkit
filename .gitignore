@@ -29,3 +29,7 @@ __pycache__/
 results/
 sandbox/
 settings.local.json
+
+# 本地/草稿文档（不入库）
+docx/题库设计.md
+docx/agent评测系统_开发说明.md
