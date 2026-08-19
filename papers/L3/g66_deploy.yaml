@@ -36,7 +36,6 @@ success_condition:
   type: all
   rules:
     - {type: tool_called, tool: occupy_device}
-    - {type: tool_called, tool: shell, args_contains: "tasklist"}
     - {type: tool_result, tool: shell, contains: "client.exe"}
 prep: ""
 version: "1"

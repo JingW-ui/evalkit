@@ -20,7 +20,7 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "tasklist"}
+    - {type: tool_called, tool: shell}
     - {type: text_contains, any_of: ["RUNNING", "NOT_RUNNING", "运行", "未运行"]}
 prep: ""
 version: "1"

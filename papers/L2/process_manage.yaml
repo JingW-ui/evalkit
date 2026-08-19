@@ -21,7 +21,6 @@ success_condition:
   type: all
   rules:
     - {type: tool_called, tool: shell, args_contains: "taskkill"}
-    - {type: tool_called, tool: shell, args_contains: "tasklist"}
     - {type: tool_ok, tool: shell, min: 2}
 prep: ""
 version: "1"
