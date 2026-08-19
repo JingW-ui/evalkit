@@ -1,0 +1,39 @@
+task_id: L3_uu_uninstall
+title: uu 卸载
+level: L3
+skill_expected: uu_remote
+query: "在设备 {device} 上静默卸载 UU 远程客户端（GameViewer），并确认卸载干净"
+device_var: "{device}"
+repeat: null
+tools_required:
+  - tool: uu-remote-uninstall
+    type: skill
+    required: true
+    note: "加载 uu-remote-uninstall skill 走卸载流程"
+  - tool: occupy_device
+    type: mcp
+    required: true
+    note: ""
+  - tool: shell
+    type: mcp
+    required: true
+    note: ""
+expected_answer:
+  result: "UU 远程已卸载干净：进程无残留 + 安装目录已删除 + 注册表卸载项已清理"
+  process:
+    - "卸载前先停 GameViewerService 服务再杀进程（服务会持续拉起子进程）"
+    - "静默卸载 cd 到安装目录内执行 Uninstall.exe /S（绝对路径会退出码 1 失败）"
+accept_criteria:
+  sr_threshold: 0.6
+  n_min: 3
+  veto: false
+success_condition:
+  type: all
+  rules:
+    - {type: tool_called, tool: occupy_device}
+    - {type: tool_called, tool: shell}
+    - {type: text_contains, any_of: ["卸载完成", "已卸载", "UNINSTALLED", "GONE"]}
+prep: ""
+version: "1"
+enabled: true
+note: "破坏性操作：会卸载目标设备上的 UU 远程客户端"

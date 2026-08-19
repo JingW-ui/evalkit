@@ -1,5 +1,5 @@
-task_id: L3_uu_take_code
-title: uu 取号（已安装）
+task_id: L3_uu_take_code_uninstalled
+title: uu 取号（未安装）
 level: L3
 skill_expected: uu_remote
 query: "在设备 {device} 上配置 UU 取号验证码 {code} 并写 DK 备注"
@@ -9,7 +9,7 @@ tools_required:
   - tool: uu-remote-auto
     type: skill
     required: true
-    note: "加载 uu-remote-auto skill 走取号流程"
+    note: "加载 uu-remote-auto skill（含安装流程）走取号"
   - tool: occupy_device
     type: mcp
     required: true
@@ -23,11 +23,11 @@ tools_required:
     required: true
     note: "写 DK 备注"
 expected_answer:
-  result: "取得真实格式的设备 ID，验证码写入 DK 备注且可回读一致"
+  result: "先安装 UU 再取号：取得真实格式的设备 ID，验证码写入 DK 备注且可回读一致"
   process:
-    - "连接后 qwinsta 预检 console Active，异常先修复"
-    - "分辨率过低先恢复 / OCR 确认窗口完整"
-    - "取号前确认『允许远程协助』开关有效（避免按钮置灰卡死）"
+    - "探测发现未安装 → 走安装流程（下载 + /S 静默安装）"
+    - "安装后 qwinsta 预检 console Active + 分辨率/窗口判定"
+    - "取号前确认『允许远程协助』开关有效，取号后写 DK 备注"
 accept_criteria:
   sr_threshold: 0.6
   n_min: 3
@@ -35,12 +35,12 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: shell, args_contains: "qwinsta"}
+    - {type: tool_called, tool: shell}
     - type: any
       rules:
         - {type: tool_result, tool: shell, contains: "DEVICE_ID="}
         - {type: tool_result, tool: shell, contains: "DK 备注更新成功"}
-prep: "已安装 UU（窗口就绪）"
+prep: "未安装 UU"
 version: "1"
 enabled: true
-note: "已安装 UU 场景：探测到已装 → 直接取号"
+note: "未安装 UU 场景：探测到未装 → 先安装 → 再取号"
