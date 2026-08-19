@@ -139,6 +139,11 @@ export async function reviewExecution(sessionId, patch) {
   return r.json()
 }
 
+export async function cleanupExecutions() {
+  const r = await fetch(`${BASE}/api/executions/cleanup`, { method: 'POST' })
+  return r.json()
+}
+
 export async function getTasks() {
   const r = await fetch(`${BASE}/api/tasks`)
   const j = await r.json()

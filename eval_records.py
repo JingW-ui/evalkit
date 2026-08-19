@@ -217,6 +217,9 @@ class EvalRecords:
     def import_papers(self, papers_dir=None) -> list:
         return self._store.import_papers(papers_dir)
 
+    def cleanup_invalid(self) -> dict:
+        return self._store.cleanup_invalid()
+
     def close(self) -> None:
         """关闭底层 SQLite 连接（释放文件句柄，便于临时目录/服务退出清理）。"""
         self._store.close()

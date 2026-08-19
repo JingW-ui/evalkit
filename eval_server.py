@@ -1473,6 +1473,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self.server.eval.rename_session(body.get("session_id", ""), body.get("name", "")))
         elif self.path == "/api/sessions/remove":
             self._send_json(self.server.eval.remove_session(body.get("session_id", "")))
+        elif self.path == "/api/executions/cleanup":
+            self._send_json(self.server.eval._records.cleanup_invalid())
         elif self.path == "/api/tasks":
             self._send_json(self.server.eval.save_task(body))
         elif self.path == "/api/dk/devices":

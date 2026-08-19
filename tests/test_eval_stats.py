@@ -20,6 +20,8 @@ def check(name, cond, detail=""):
 
 with tempfile.TemporaryDirectory() as td:
     s = EvalStore(Path(td) / "t.db")
+    # 建任务定义（stats 只统计 task_id 在 tasks 表里的记录）
+    s.upsert_task({"task_id": "t1", "level": "L3", "skill_expected": "g66", "query": "q"})
     # 同一 task 3 次执行
     s.upsert({"session_id": "t1-r0", "task_id": "t1", "run_idx": 0, "agent": "claude",
               "skill_expected": "g66", "level": "L3", "success": True,

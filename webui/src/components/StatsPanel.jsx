@@ -1,9 +1,18 @@
 import React, { useEffect, useState } from 'react'
-import { getStats, getExecutions, reviewExecution } from '../api.js'
+import { getStats, getExecutions, reviewExecution, cleanupExecutions } from '../api.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
-const fmtDur = ms => ms == null ? '—' : (ms / 1000).toFixed(0) + 's'
-const fmtSD = (m, sd) => m == null ? '—' : (sd == null ? `${m}` : `${m} ± ${sd}`)
+// 耗时自适应单位：<60s → "42s"；≥60s → "3m20s" / "3m"
+const fmtDur = ms => {
+  if (ms == null) return '—'
+  const s = ms / 1000
+  if (s < 60) return s.toFixed(0) + 's'
+  const m = Math.floor(s / 60)
+  const rem = Math.floor(s % 60)
+  return rem > 0 ? `${m}m${rem}s` : `${m}m`
+}
+// 成本：<0.01 保留 4 位小数，否则 3 位
+const fmtCost = v => v == null ? '—' : (v < 0.01 ? v.toFixed(4) : v.toFixed(3))
 const fmtPct = x => x == null ? '—' : (x * 100).toFixed(0) + '%'
 const fmtTok = n => n == null ? '—' : (n >= 10000 ? (n / 10000).toFixed(1) + '万' : n.toLocaleString())
 const LEVEL_COLOR = { L1: '#58a6ff', L2: '#2da44e', L3: '#f0883e', L4: '#cf222e' }
@@ -21,6 +30,11 @@ export default function StatsPanel({ onOpenSession }) {
 
   useEffect(() => { refresh() }, [])
   function refresh() { getStats().then(setRows).catch(() => {}) }
+  async function doCleanup() {
+    if (!window.confirm('清理无效执行记录（task_id 为空或不在当前题库）？')) return
+    await cleanupExecutions()
+    refresh()
+  }
 
   const rowKey = r => (r.task_id || '') + '|' + (r.model || '')
 
@@ -55,7 +69,9 @@ export default function StatsPanel({ onOpenSession }) {
 
   return (
     <div className="panel">
-      <h2>统计总览 · {filtered.length}/{rows.length} 个任务 <button className="ghost" onClick={refresh} style={{ float: 'right' }}>↻</button></h2>
+      <h2>统计总览 · {filtered.length}/{rows.length} 个任务
+        <button className="ghost" onClick={doCleanup} style={{ float: 'right' }} title="清理无效执行记录（task_id 为空或不在当前题库）">清理无效数据</button>
+        <button className="ghost" onClick={refresh} style={{ float: 'right' }}>↻</button></h2>
       <div className="launcher-row" style={{ marginBottom: 8 }}>
         <label>筛选</label>
         <select value={fAgent} onChange={e => setFAgent(e.target.value)}><option value="">agent 全部</option>{agents.map(a => <option key={a} value={a}>{a}</option>)}</select>
@@ -73,7 +89,7 @@ export default function StatsPanel({ onOpenSession }) {
         </colgroup>
         <thead><tr>
           <th>任务</th><th>agent</th><th>模型</th><th>skill</th><th>L</th><th className="num">n</th>
-          <th className="num">成功率</th><th className="num">耗时(均值±σ)</th><th className="num">成本¥(均值±σ)</th>
+          <th className="num">成功率</th><th className="num">耗时(均值±σ)</th><th className="num">成本(均值±σ)</th>
         </tr></thead>
         <tbody>
           {filtered.map(r => (
@@ -96,8 +112,12 @@ export default function StatsPanel({ onOpenSession }) {
                     </span>
                   )}
                 </td>
-                <td className="num">{fmtSD(Math.round(r.duration_ms / 1000), r.duration_sd != null ? Math.round(r.duration_sd / 1000) : null)}</td>
-                <td className="num">{r.cost_cny != null ? r.cost_cny.toFixed(3) + (r.cost_sd != null ? ' ± ' + r.cost_sd.toFixed(3) : '') : '—'}</td>
+                <td className="num">{r.duration_ms != null
+                  ? fmtDur(r.duration_ms) + (r.duration_sd != null ? ' ± ' + fmtDur(r.duration_sd) : '')
+                  : '—'}</td>
+                <td className="num">{r.cost_cny != null
+                  ? '¥' + fmtCost(r.cost_cny) + (r.cost_sd != null ? ' ± ' + fmtCost(r.cost_sd) : '')
+                  : '—'}</td>
               </tr>
               {open === rowKey(r) && (
                 <tr><td colSpan="9" style={{ padding: 0, background: 'var(--bg)' }}>
@@ -118,7 +138,7 @@ function ExecList({ execs, reviewing, setReviewing, saveReview, onOpenSession })
   return (
     <table style={{ margin: 0 }}>
       <thead><tr><th>#</th><th>成功</th><th>级别</th><th className="num">耗时</th>
-        <th className="num">成本¥</th><th className="num">工具成功率</th><th className="num">工具次数</th>
+        <th className="num">成本</th><th className="num">工具成功率</th><th className="num">工具次数</th>
         <th className="num">人工介入</th><th className="num">Token(in)</th><th>结束</th><th>操作</th></tr></thead>
       <tbody>
         {execs.map(e => (
@@ -142,7 +162,7 @@ function ReviewRow({ e, reviewing, setReviewing, saveReview, onOpenSession }) {
       <td style={{ color: e.success ? 'var(--green)' : 'var(--red)' }}>{e.success ? '✓' : '✗'}</td>
       <td><span className="badge" style={{ background: (LEVEL_COLOR[e.level] || '#6e7681') + '33', color: LEVEL_COLOR[e.level] || '#6e7681' }}>{e.level}</span></td>
       <td className="num">{fmtDur(e.duration_ms)}</td>
-      <td className="num">{e.cost_cny != null ? e.cost_cny.toFixed(3) : '—'}</td>
+      <td className="num">{e.cost_cny != null ? '¥' + fmtCost(e.cost_cny) : '—'}</td>
       <td className="num">{tsr != null ? fmtPct(tsr) : '—'}</td>
       <td className="num">{e.tool_calls_total ?? '—'}</td>
       <td className="num">{e.human_interventions ?? '—'}</td>

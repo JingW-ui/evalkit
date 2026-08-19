@@ -220,9 +220,10 @@ class EvalStore:
         duration_ms/duration_sd + cost_cny/cost_sd/cost_sum + tool_sr/tool_sr_sd +
         tool_calls/tool_calls_sd + input_tokens/input_sd + human_interventions。
         """
-        recs = [r for r in self.all()
-                if r.get("task_id") and r.get("review_status") != "invalid"]
         task_map = {t["task_id"]: t for t in self.list_tasks()}
+        # 只统计 task_id 在 tasks 表里的记录（删题后孤儿记录不进统计）
+        recs = [r for r in self.all()
+                if r.get("task_id") in task_map and r.get("review_status") != "invalid"]
         groups = {}
         for r in recs:
             key = (r.get("task_id"), r.get("skill_expected"), r.get("level"), r.get("agent"), r.get("model"))
@@ -268,6 +269,19 @@ class EvalStore:
                 "veto": veto, "veto_hit": veto_hit,
             })
         return {"rows": rows}
+
+    def cleanup_invalid(self) -> dict:
+        """清理无效执行记录：task_id 为空 或 不在当前 tasks 表（孤儿）。返回清理数量。"""
+        valid = {t["task_id"] for t in self.list_tasks()}
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, task_id FROM executions").fetchall()
+            to_del = [r["session_id"] for r in rows
+                      if not r["task_id"] or r["task_id"] not in valid]
+            for sid in to_del:
+                self._conn.execute("DELETE FROM executions WHERE session_id=?", (sid,))
+            self._conn.commit()
+        return {"deleted": len(to_del)}
 
     def review(self, session_id: str, level=None, success=None, note=None, reset=False,
                defense=None) -> dict | None:

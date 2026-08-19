@@ -87,6 +87,7 @@ def test_stats_ci_and_veto():
 def test_review_defense():
     s = EvalStore(_tmp_db())
     try:
+        s.upsert_task({"task_id": "L1_device_list", "level": "L1"})  # 建任务（stats 只统计 tasks 表里的 task）
         s.upsert({"session_id": "x1", "task_id": "L1_device_list", "level": "L1",
                   "success": 0, "success_auto": 0, "_at": 1})
         r = s.review("x1", defense="pass")
