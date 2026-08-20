@@ -20,6 +20,7 @@ def check(name, cond, detail=""):
 # ---- MCP 前缀归一化 ----
 check("strip mcp 前缀", _strip_mcp("mcp__airgattai__list_devices") == "list_devices")
 check("本地工具保留", _strip_mcp("Bash") == "Bash" and _strip_mcp("Grep") == "Grep")
+check("PowerShell 归一为 Bash", _strip_mcp("PowerShell") == "Bash")
 
 METRICS = {
     "tasks": [{"tools": [
@@ -61,6 +62,10 @@ check("tool_called args_contains",
 check("tool_called min_calls",
       ev({"type": "tool_called", "tool": "shell", "min_calls": 2}) is True)
 check("tool_called 不存在", ev({"type": "tool_called", "tool": "push_file"}) is False)
+check("tool_called any_of 命中",
+      ev({"type": "tool_called", "any_of": ["push_file", "list_devices"]}) is True)
+check("tool_called any_of 未命中",
+      ev({"type": "tool_called", "any_of": ["push_file", "occupy_device"]}) is False)
 
 # ---- tool_result ----
 check("tool_result contains",

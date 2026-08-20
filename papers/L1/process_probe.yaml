@@ -22,7 +22,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["未在运行", "未运行", "RUNNING", "NOT_RUNNING"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

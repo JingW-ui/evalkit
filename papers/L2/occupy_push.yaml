@@ -2,7 +2,7 @@ task_id: L2_occupy_push
 title: 占用+推文件
 level: L2
 skill_expected: base
-query: "占用设备 {device}，把 {file} 推到它的 D:/ 下"
+query: "占用设备 {device}，把 D:/wy_projects/evalkit/sandbox/cfg_smoke.txt 推到它的 D:/ 下"
 device_var: "{device}"
 repeat: null
 tools_required:
@@ -30,7 +30,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: push_file}
-    - {type: text_contains, any_of: ["已推送", "推送成功"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

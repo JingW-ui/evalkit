@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "返回真实 WxH（非猜测）"
+  result: "返回当前桌面分辨率 WxH（如实报告当前实测值；若被虚拟屏压成兜底分辨率需说明，不要求必须等于物理原生值）"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -21,7 +21,7 @@ success_condition:
   type: all
   rules:
     - {type: tool_called, tool: occupy_device}
-    - {type: text_contains, any_of: ["分辨率", "×"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

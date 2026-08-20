@@ -130,6 +130,7 @@ class EventMetrics:
         self.last_event_time = None       # 最近事件时间（毫秒 epoch）
         self.started_at_ms = None
         self.assistant_text_parts = []    # assistant/message 的 text 拼接（供锚点匹配）
+        self.assistant_text_typed = []    # [(type, text)]，区分 text / reasoning，供 final_text 取最终答复
         self.todo_latest = None           # 最新 todo/write 快照
 
         self._pending_calls = {}          # callId -> {"name", "start_ms"}
@@ -222,6 +223,7 @@ class EventMetrics:
                     text = block.get("text")
                     if text:
                         self.assistant_text_parts.append(text)
+                        self.assistant_text_typed.append((block.get("type"), text))
             # usage（每步最终值，覆盖流式中间值）
             usage = msg.get("usage")
             if isinstance(usage, dict):
@@ -247,9 +249,12 @@ class EventMetrics:
             if self._cur_task is not None:
                 self._cur_task["tool_calls"] += 1
                 # 任务工具链：记录调用顺序（供链式可视化）
+                raw_args = data.get("arguments") or ""
                 tool_item = {
                     "name": name,
-                    "args": (data.get("arguments") or "")[:120],
+                    "args": raw_args[:2000],
+                    "args_truncated": len(raw_args) > 2000,
+                    "callId": data.get("callId"),
                     "call_ms": t_ms,
                     "dur_ms": None,
                     "ok": None,
@@ -300,7 +305,8 @@ class EventMetrics:
                     if isinstance(b, dict) and b.get("type") in ("tool-result", "tool_result"):
                         c = b.get("content")
                         if isinstance(c, str):
-                            started["tool"]["result"] = c[:200]
+                            started["tool"]["result"] = c[:8000]
+                            started["tool"]["result_truncated"] = len(c) > 8000
                             break
             if err:
                 self.tool_fail += 1
@@ -327,6 +333,13 @@ class EventMetrics:
     def assistant_text(self, limit: int = 100_000) -> str:
         """assistant 文本拼接（供锚点匹配），截断防爆。"""
         return "".join(self.assistant_text_parts)[:limit]
+
+    def final_text(self) -> str:
+        """最终答复文本 = 最后一条 text 类型块（排除 reasoning/thinking）。"""
+        for typ, txt in reversed(self.assistant_text_typed):
+            if typ == "text" and txt.strip():
+                return txt
+        return ""
 
     def _track_subtask(self, name: str, arguments, t_ms) -> None:
         """追踪子任务：TaskCreate 创建（无 id 按出现顺序配对），TaskUpdate 更新状态。"""
@@ -428,6 +441,7 @@ class EventMetrics:
                             if self.started_at_ms is not None and self.last_event_time is not None else None),
             "started_at": self.started_at_ms,   # 会话开始（首个事件时间，毫秒 epoch）
             "ended_at": self.last_event_time,   # 会话结束（末个事件时间）
+            "final_text": self.final_text(),    # 最终答复文本（供 llm_judge 判结论）
         }
 
     def check_warnings(self) -> list:

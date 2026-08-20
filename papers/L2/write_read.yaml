@@ -2,7 +2,7 @@ task_id: L2_write_read
 title: 写读闭环
 level: L2
 skill_expected: base
-query: "在设备 {device} 的 {dir} 创建 {file} 写入内容 evalkit-L2-write-read-67890，再读回确认"
+query: "在设备 {device} 的 D:/evalkit_test 创建 write_read.txt 写入内容 evalkit-L2-write-read-67890，再读回确认"
 device_var: "{device}"
 repeat: null
 tools_required:
@@ -22,7 +22,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["一致", "读回"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

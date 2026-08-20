@@ -2,7 +2,7 @@ task_id: L3_uu_take_code
 title: uu 取号（已安装）
 level: L3
 skill_expected: uu_remote
-query: "在设备 {device} 上配置 UU 取号验证码 {code} 并写 DK 备注"
+query: "在设备 {device} 上配置 UU 取号验证码 163a163a 并写 DK 备注"
 device_var: "{device}"
 repeat: null
 tools_required:
@@ -36,8 +36,7 @@ success_condition:
   type: all
   rules:
     - {type: tool_called, tool: occupy_device}
-    - {type: text_contains, any_of: ["DEVICE_ID", "设备 ID"]}
-    - {type: text_contains, any_of: ["DK 备注"]}
+    - {type: llm_judge}
 prep: "已安装 UU（窗口就绪）"
 version: "1"
 enabled: true

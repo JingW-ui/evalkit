@@ -338,7 +338,8 @@ class EvalServer:
                 "success_by": verdict["success_by"],
                 "tool_calls_total": metrics.get("tool_calls_total"),
                 "input_tokens": metrics.get("input_tokens"),
-                "cost_cny": metrics.get("cost_cny") or metrics.get("cost_est_cny"),
+                # 统计口径统一用挂牌价估算（模型/平台返回的 cost 虚高，仅作参考）
+                "cost_cny": metrics.get("cost_est_cny") if metrics.get("cost_est_cny") is not None else metrics.get("cost_cny"),
                 "human_interventions": metrics.get("human_interventions"),
                 "turn_end_reason": metrics.get("turn_end_reason"),
                 "query": (query or "")[:200],
@@ -348,7 +349,11 @@ class EvalServer:
             return None
 
     def _enrich_cost(self, metrics: dict) -> dict:
-        """补成本估算（USD + RMB 换算）；官方 cost_usd 保留优先展示。"""
+        """补成本估算（USD + RMB 换算）。
+
+        cost_cny = 模型/平台返回的结算价（虚高，仅参考）；
+        cost_est_cny = 挂牌价估算（统计总览/入库的权威口径，见 _record_eval）。
+        """
         if not isinstance(metrics, dict):
             return metrics
         try:
@@ -1025,6 +1030,13 @@ class EvalServer:
                 env = {}
         cwd = params.get("cwd") or env.get("cwd")
         device = params.get("device") or env.get("device")
+        # 判分模型/参数（前端可选下发；缺省回落到 conf.json judge 段）
+        try:
+            from judge_llm import set_judge_config
+            set_judge_config(model=params.get("judge_model"),
+                             max_tokens=params.get("judge_max_tokens"))
+        except Exception:
+            pass
         if device:
             for t in tasks:
                 t["query"] = t.get("query", "").replace("{device}", device)

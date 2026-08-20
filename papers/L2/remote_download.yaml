@@ -2,7 +2,7 @@ task_id: L2_remote_download
 title: 远程下载
 level: L2
 skill_expected: base
-query: "让设备 {device} 从 {url} 下载文件到 D:/cfg_smoke_download.txt"
+query: "让设备 {device} 从 http://10.226.230.230:18999/cfg_smoke.txt 下载文件到 D:/cfg_smoke_download.txt"
 device_var: "{device}"
 repeat: null
 tools_required:
@@ -22,7 +22,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["下载完成", "下载成功", "OK size"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

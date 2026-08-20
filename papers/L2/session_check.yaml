@@ -22,7 +22,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["Active", "活动", "console"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

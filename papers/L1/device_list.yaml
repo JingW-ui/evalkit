@@ -11,7 +11,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "返回在线且空闲的 PC 清单，含 model(主机名)/serialno(UUID)/IP/占用状态，且 model↔serialno 对应关系正确"
+  result: "返回在线且空闲的 PC 清单，含 serialno(UUID) 与主机名且对应正确；IP/占用状态尽量给；台数随设备池实时变化以实际列出为准"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -22,7 +22,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: list_devices}
     - {type: tool_ok, tool: list_devices, min: 1}
-    - {type: text_contains, any_of: ["serialno", "空闲"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

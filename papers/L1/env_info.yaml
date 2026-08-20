@@ -20,9 +20,14 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: occupy_device}
-    - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["主机名", "系统版本"]}
+    - type: any
+      rules:
+        - type: all
+          rules:
+            - {type: tool_called, tool: occupy_device}
+            - {type: tool_called, tool: shell}
+        - {type: tool_called, any_of: [Bash, Read, Glob]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

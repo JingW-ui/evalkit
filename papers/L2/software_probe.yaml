@@ -15,7 +15,7 @@ tools_required:
     required: true
     note: ""
 expected_answer:
-  result: "明确报告 GameViewer.exe 已装/未装及版本（默认路径优先、注册表兜底）"
+  result: "明确报告 GameViewer.exe 已装/未装及版本号（默认路径优先、注册表兜底；版本号可能随软件自动升级变化，如实报告即可）"
   process: []
 accept_criteria:
   sr_threshold: 0.8
@@ -26,7 +26,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["已安装", "未安装", "INSTALLED", "NOT_INSTALLED"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

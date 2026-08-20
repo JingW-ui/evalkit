@@ -21,7 +21,7 @@ success_condition:
   type: all
   rules:
     - {type: tool_called, tool: list_devices}
-    - {type: text_contains, any_of: ["已连接", "在线", "离线"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

@@ -20,8 +20,8 @@ accept_criteria:
 success_condition:
   type: all
   rules:
-    - {type: tool_called, tool: Bash}
-    - {type: text_contains, any_of: ["存在", "EXISTS", "不存在", "NOT_FOUND"]}
+    - {type: tool_called, any_of: [Bash, Glob, Read]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

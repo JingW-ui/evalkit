@@ -18,6 +18,8 @@ export default function BatchEval() {
   const [device, setDevice] = useState('')
   const [models, setModels] = useState([])
   const [model, setModel] = useState('')
+  const [judgeModel, setJudgeModel] = useState('glm-5.2')   // 判分模型（LLM-as-judge）
+  const [judgeMaxTokens, setJudgeMaxTokens] = useState(4096) // 判分输出上限
   const [terminals, setTerminals] = useState([])
   const [termOpen, setTermOpen] = useState(false)
   const [fs, setFs] = useState(null)
@@ -79,6 +81,8 @@ export default function BatchEval() {
       model: model ? (agent === 'codemaker' ? `netease-codemaker/${model}` : model) : undefined,
       provider: (agent === 'claude' && model) ? 'codemaker_deepseek' : undefined,
       task_ids: selectedIds,
+      judge_model: judgeModel || undefined,
+      judge_max_tokens: judgeMaxTokens || undefined,
     })
     setInfo(j.ok ? `已发起：${j.total} 个任务 × ${j.repeat} 次（agent=${j.agent}）` : (j.error || '发起失败'))
     refreshStatus()
@@ -132,6 +136,18 @@ export default function BatchEval() {
         <input value={cwd} onChange={e => setCwd(e.target.value)} spellCheck={false}
                placeholder="含 .mcp.json / .claude/skills" title="MCP/skill 从该目录加载" style={{ width: 300, flex: 'none' }} />
         <button className="ghost" onClick={() => { setFsPickOpen(!fsPickOpen); if (!fs && !fsPickOpen) navFs(cwd) }}>浏览</button>
+      </div>
+
+      <div className="launcher-row">
+        <label style={{ width: 'auto' }}>判分模型</label>
+        <select value={judgeModel} onChange={e => setJudgeModel(e.target.value)} style={{ width: 180, flex: 'none' }}
+                title="LLM 判最终结论用的裁判模型（与被测模型无关）">
+          <option value="glm-5.2">glm-5.2（默认）</option>
+          {models.filter(m => m !== 'glm-5.2').map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <label style={{ width: 'auto' }}>判分 max_tokens</label>
+        <input type="number" value={judgeMaxTokens} onChange={e => setJudgeMaxTokens(parseInt(e.target.value || '4096'))}
+               style={{ width: 88, flex: 'none' }} title="判分输出 token 上限（推理模型需留足，过小会截断 JSON）" />
       </div>
       {fsPickOpen && (
         <div className="fs-picker" style={{ margin: '4px 0 10px 80px' }}>

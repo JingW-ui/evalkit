@@ -32,8 +32,7 @@ success_condition:
   rules:
     - {type: tool_called, tool: occupy_device}
     - {type: tool_called, tool: shell}
-    - {type: text_contains, any_of: ["UNINSTALLED", "卸载完成", "已卸载"]}
-    - {type: text_contains, any_of: ["PROC_CLEAN", "GONE"]}
+    - {type: llm_judge}
 prep: ""
 version: "1"
 enabled: true

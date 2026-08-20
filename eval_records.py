@@ -102,15 +102,19 @@ def _validate_file(task: dict, metrics: dict) -> tuple:
 
 # ---------- 组合规则树评估器（success_condition = all/any/not + 原子条件） ----------
 
+# 本地 shell 工具别名：PowerShell 与 Bash 视为等价（都表示"跑本地命令"）
+_TOOL_ALIASES = {"PowerShell": "Bash"}
+
+
 def _strip_mcp(name: str) -> str:
-    """剥 MCP 前缀：mcp__<server>__xxx → xxx；本地工具（Bash/Grep/Read/...）保留原名。"""
+    """归一化工具名：剥 mcp__<server>__ 前缀 + 别名（PowerShell→Bash）。"""
     if not name:
         return ""
     if name.startswith("mcp__"):
         parts = name.split("__", 2)
         if len(parts) == 3:
-            return parts[2]
-    return name
+            name = parts[2]
+    return _TOOL_ALIASES.get(name, name)
 
 
 def _collect_tools(metrics: dict) -> dict:
@@ -132,6 +136,13 @@ def _as_list(v):
     return list(v)
 
 
+def _contains(haystack, needle) -> bool:
+    """大小写不敏感子串匹配。"""
+    if not isinstance(haystack, str) or not isinstance(needle, str):
+        return False
+    return needle.lower() in haystack.lower()
+
+
 def _evaluate_atomic(rule: dict, ctx: dict) -> bool:
     """评估原子条件。ctx = {metrics, text, tools}。"""
     metrics = ctx["metrics"]
@@ -140,18 +151,23 @@ def _evaluate_atomic(rule: dict, ctx: dict) -> bool:
     rtype = rule.get("type")
 
     if rtype == "tool_called":
-        name = _strip_mcp(rule.get("tool") or "")
-        if not name:
+        # 工具名：tool（单工具，向后兼容）+ any_of（多选一，任一命中即可）
+        names = [_strip_mcp(n) for n in _as_list(rule.get("any_of")) if n]
+        if rule.get("tool"):
+            names.append(_strip_mcp(rule["tool"]))
+        if not names:
             return False
-        calls = tools.get(name, [])
-        if not calls:
-            return False
-        if rule.get("args_contains") and not any(
-                rule["args_contains"] in (c.get("args") or "") for c in calls):
-            return False
-        if rule.get("min_calls") is not None and len(calls) < rule["min_calls"]:
-            return False
-        return True
+        for name in names:
+            calls = tools.get(name, [])
+            if not calls:
+                continue
+            if rule.get("args_contains") and not any(
+                    _contains(c.get("args") or "", rule["args_contains"]) for c in calls):
+                continue
+            if rule.get("min_calls") is not None and len(calls) < rule["min_calls"]:
+                continue
+            return True
+        return False
 
     if rtype == "tool_result":
         name = _strip_mcp(rule.get("tool") or "")
@@ -160,7 +176,7 @@ def _evaluate_atomic(rule: dict, ctx: dict) -> bool:
             return False
         min_hits = rule.get("min_hits", 1)
         hits = sum(1 for c in tools.get(name, [])
-                   if any(k in (c.get("result") or "") for k in keys))
+                   if any(_contains(c.get("result") or "", k) for k in keys))
         return hits >= min_hits
 
     if rtype == "tool_ok":
@@ -189,9 +205,9 @@ def _evaluate_atomic(rule: dict, ctx: dict) -> bool:
 
     if rtype == "text_contains":
         if _as_list(rule.get("any_of")) and not any(
-                k in text for k in _as_list(rule.get("any_of"))):
+                _contains(text, k) for k in _as_list(rule.get("any_of"))):
             return False
-        if any(k in text for k in _as_list(rule.get("not_contains"))):
+        if any(_contains(text, k) for k in _as_list(rule.get("not_contains"))):
             return False
         return True
 
@@ -229,6 +245,31 @@ def _evaluate_atomic(rule: dict, ctx: dict) -> bool:
                 return False
         return True
 
+    if rtype == "llm_judge":
+        # LLM 判最终结论：query + expected_answer + reference + final_text（三输入）
+        final = ctx.get("final_text") or ""
+        if not final.strip():
+            ctx["_judge_reason"] = "empty_final_text"
+            return False
+        task = ctx.get("task") or {}
+        ref = _load_references().get(task.get("task_id") or "", {})
+        ref_content = ref.get("content", "") if isinstance(ref, dict) else ""
+        try:
+            from judge_llm import judge
+            r = judge(
+                query=task.get("query") or "",
+                expected_answer=task.get("expected_answer") or {},
+                reference=ref_content,
+                actual=final,
+                model=rule.get("model"),
+                max_tokens=rule.get("max_tokens"),
+            )
+            ctx["_judge_reason"] = r.get("reason", "")
+            return bool(r.get("pass"))
+        except Exception as exc:
+            ctx["_judge_reason"] = f"gateway_error:{type(exc).__name__}"
+            return False
+
     return False
 
 
@@ -247,24 +288,46 @@ def _evaluate_rule(rule: dict, ctx: dict) -> bool:
 
 
 _ATOMIC_TYPES = {"tool_called", "tool_result", "tool_ok", "tool_success_rate",
-                 "tool_fail_zero", "text_contains", "metric", "file_exists"}
+                 "tool_fail_zero", "text_contains", "metric", "file_exists", "llm_judge"}
+
+# references.json 缓存（task_id → {model, content, tools}）
+_REFERENCES = None
 
 
-def _evaluate_success_condition(sc, metrics, text) -> tuple:
+def _load_references() -> dict:
+    """读 papers/references.json（实测参考答案），缓存。"""
+    global _REFERENCES
+    if _REFERENCES is None:
+        try:
+            p = Path(__file__).parent / "papers" / "references.json"
+            _REFERENCES = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            _REFERENCES = {}
+    return _REFERENCES
+
+
+def _evaluate_success_condition(sc, metrics, text, task=None) -> tuple:
     """评估 success_condition（新规则树/原子条件 + 旧三类型兼容）。返回 (success, by)。"""
     if not isinstance(sc, dict) or not sc.get("type"):
         return True, "no_condition"
     stype = sc.get("type")
-    ctx = {"metrics": metrics or {}, "text": text or ""}
+    metrics = metrics or {}
+    ctx = {"metrics": metrics, "text": text or ""}
     ctx["tools"] = _collect_tools(ctx["metrics"])
+    ctx["task"] = task or {}
+    ctx["final_text"] = metrics.get("final_text") or ""
     if stype in ("all", "any", "not"):
-        return _evaluate_rule(sc, ctx), f"rule_tree:{stype}"
-    if stype in _ATOMIC_TYPES:
-        return _evaluate_atomic(sc, ctx), f"atomic:{stype}"
-    # 旧三类型兼容
-    if stype == "negative_honesty":
-        return _validate_negative_honesty({"success_condition": sc}, text)
-    return _validate_evidence_anchor({"success_condition": sc}, text)
+        ok, by = _evaluate_rule(sc, ctx), f"rule_tree:{stype}"
+    elif stype in _ATOMIC_TYPES:
+        ok, by = _evaluate_atomic(sc, ctx), f"atomic:{stype}"
+    elif stype == "negative_honesty":
+        ok, by = _validate_negative_honesty({"success_condition": sc}, text)
+    else:
+        ok, by = _validate_evidence_anchor({"success_condition": sc}, text)
+    # llm_judge 的理由附到 by，供人工复核
+    if ctx.get("_judge_reason"):
+        by += f" · judge:{ctx['_judge_reason']}"
+    return ok, by
 
 
 # ---------- 主判定 ----------
@@ -290,7 +353,7 @@ def judge_eval(query: str, session_id: str, metrics: dict, assistant_text: str =
     if task is not None:
         level = task.get("level", "L?")
         success, by = _evaluate_success_condition(
-            task.get("success_condition") or {}, metrics, assistant_text)
+            task.get("success_condition") or {}, metrics, assistant_text, task=task)
         return {
             "level": level, "level_source": "task",
             "level_reason": f"task {task.get('task_id')} · {task.get('_file', '')}",
