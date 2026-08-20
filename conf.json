@@ -2,8 +2,17 @@
   "pricing": {
     "currency": "CNY",
     "cny_per_usd": 7.2,
-    "note": "成本估算策略：官方/真实成本优先（claude total_cost_usd、airlab cost 字段）；缺失时按 models_usd 挂牌价表直接估算（USD/百万 tokens）。展示统一换算 RMB（cny_per_usd）。平台档位名（deepseek-v4-flash 等）走 anchor×multiplier 推算，见 cost.py estimate_cost_usd",
-    "peak_hours": [[9, 12], [14, 18]],
+    "note": "成本口径：统计总览/入库统一用 models_usd 挂牌价估算（cost_est_cny，USD/百万 tokens，2026-08 价表）；模型/平台返回的 cost_usd 虚高、仅作参考（cost_cny）。展示统一换算 RMB（cny_per_usd）。DeepSeek 分闲时/高峰（peak_hours），由 pick_price 按当前时段取 offpeak/peak。",
+    "peak_hours": [
+      [
+        9,
+        12
+      ],
+      [
+        14,
+        18
+      ]
+    ],
     "peak_multiplier": 2.0,
     "anchor_per_1m": {
       "input": 1.5,
@@ -30,7 +39,191 @@
       "kimi-k3[1m]": 2.1
     },
     "models_usd": {
-      "_comment": "主流模型挂牌价（USD/百万 tokens），调研日期 2026-04；cache_read 常见 ≈10% input，cache_write 常见 ≈1.25x input",
+      "_comment": "主流模型挂牌价（USD/百万 tokens），调研日期 2026-08；cache_read 缺省 ≈10% input，cache_write 缺省 ≈1.25x input；DeepSeek 分闲时/高峰（peak_hours）",
+      "deepseek-v4-flash": {
+        "offpeak": {
+          "input": 0.21,
+          "output": 0.63,
+          "cache_read": 0.007,
+          "cache_write": 0.0
+        },
+        "peak": {
+          "input": 0.42,
+          "output": 1.25,
+          "cache_read": 0.014,
+          "cache_write": 0.0
+        }
+      },
+      "deepseek-v4-pro": {
+        "offpeak": {
+          "input": 0.63,
+          "output": 1.88,
+          "cache_read": 0.021,
+          "cache_write": 0.0
+        },
+        "peak": {
+          "input": 1.25,
+          "output": 3.75,
+          "cache_read": 0.042,
+          "cache_write": 0.0
+        }
+      },
+      "gpt-5.6-luna": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      },
+      "gpt-5.6-terra": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "gpt-5.6-sol": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      },
+      "gpt-5.5-pro": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 3.0,
+        "cache_write": 37.5
+      },
+      "claude-haiku-4.5": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      },
+      "claude-sonnet-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "claude-opus-5": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      },
+      "claude-fable-5": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      },
+      "gemini-3.1-flash-lite": {
+        "input": 0.25,
+        "output": 1.5,
+        "cache_read": 0.025,
+        "cache_write": 0.3125
+      },
+      "gemini-3-flash": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.05,
+        "cache_write": 0.625
+      },
+      "gemini-3.1-pro": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "gemini-3.5-flash": {
+        "input": 1.5,
+        "output": 9.0,
+        "cache_read": 0.15,
+        "cache_write": 1.875
+      },
+      "grok-4.5": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "qwen3.6-flash": {
+        "input": 0.19,
+        "output": 1.13,
+        "cache_read": 0.019,
+        "cache_write": 0.2375
+      },
+      "qwen3.6-plus": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.05,
+        "cache_write": 0.625
+      },
+      "qwen3.7-max": {
+        "input": 1.67,
+        "output": 5.0,
+        "cache_read": 0.167,
+        "cache_write": 2.0875
+      },
+      "glm-5.2": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.14,
+        "cache_write": 1.75
+      },
+      "kimi-k2.6": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.095,
+        "cache_write": 1.1875
+      },
+      "kimi-k3": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      },
+      "MiniMax-M3": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.75
+      },
+      "doubao-pro-2.1": {
+        "input": 1.39,
+        "output": 4.17,
+        "cache_read": 0.139,
+        "cache_write": 1.7375
+      },
+      "hunyuan-3": {
+        "input": 0.14,
+        "output": 0.56,
+        "cache_read": 0.014,
+        "cache_write": 0.175
+      },
+      "claude-opus-4-6": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      },
+      "claude-opus-4-7": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      },
+      "claude-opus-4-8": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      },
+      "claude-sonnet-4-6": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      },
       "deepseek-v3.2": {
         "input": 0.28,
         "output": 0.42,
@@ -42,14 +235,6 @@
         "output": 2.19,
         "cache_read": 0.055,
         "cache_write": 1.1
-      },
-      "deepseek-v4-flash": {
-        "offpeak": {"input": 0.208, "output": 0.625, "cache_read": 0.0069, "cache_write": 0.0},
-        "peak": {"input": 0.417, "output": 1.25, "cache_read": 0.0139, "cache_write": 0.0}
-      },
-      "deepseek-v4-pro": {
-        "offpeak": {"input": 0.625, "output": 1.875, "cache_read": 0.0208, "cache_write": 0.0},
-        "peak": {"input": 1.25, "output": 3.75, "cache_read": 0.0417, "cache_write": 0.0}
       },
       "claude-sonnet-4.6": {
         "input": 3.0,
@@ -73,25 +258,25 @@
         "input": 2.5,
         "output": 15.0,
         "cache_read": 0.25,
-        "cache_write": 3.13
+        "cache_write": 3.125
       },
       "gpt-5.4-mini": {
         "input": 0.75,
         "output": 4.5,
         "cache_read": 0.075,
-        "cache_write": 0.94
+        "cache_write": 0.9375
       },
       "o3-mini": {
         "input": 1.1,
         "output": 4.4,
         "cache_read": 0.11,
-        "cache_write": 1.38
+        "cache_write": 1.375
       },
       "o4-mini": {
         "input": 1.1,
         "output": 4.4,
         "cache_read": 0.11,
-        "cache_write": 1.38
+        "cache_write": 1.375
       },
       "qwen3-max": {
         "input": 2.4,
@@ -127,13 +312,7 @@
         "input": 0.3,
         "output": 2.5,
         "cache_read": 0.03,
-        "cache_write": 0.38
-      },
-      "gemini-3.1-pro": {
-        "input": 2.0,
-        "output": 12.0,
-        "cache_read": 0.2,
-        "cache_write": 2.5
+        "cache_write": 0.375
       },
       "grok-4": {
         "input": 3.0,
@@ -180,6 +359,10 @@
   "default_model": "claude-sonnet-5",
   "default_n": 3,
   "step_timeout_s": 300,
+  "judge": {
+    "model": "glm-5.2",
+    "provider": "codemaker_deepseek"
+  },
   "session_aliases": {
     "8c537184-09c2-41cc-a260-f28fba46fd83": "8c537184-09c2-41cc-a260-f28fba46fd83"
   },

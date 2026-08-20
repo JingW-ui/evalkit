@@ -52,6 +52,7 @@ def load_tasks_from_dir(tasks_dir: str | Path, domains: list = None, levels: lis
 
 
 # ---------- 成本折算（与 eval_server._enrich_cost 同口径） ----------
+# cost_cny = 模型/平台返回结算价（虚高，仅参考）；cost_est_cny = 挂牌价估算（入库权威口径）。
 
 def _enrich_cost(metrics: dict) -> dict:
     if not isinstance(metrics, dict):
@@ -185,7 +186,8 @@ def run_batch(tasks: list, backend: str = "claude", timeout_s: int = 300,
                 "input_tokens": metrics.get("input_tokens"),
                 "output_tokens": metrics.get("output_tokens"),
                 "cache_read_tokens": metrics.get("cache_read_tokens"),
-                "cost_cny": metrics.get("cost_cny") or metrics.get("cost_est_cny"),
+                # 统计口径统一用挂牌价估算（模型/平台返回的 cost 虚高，仅作参考）
+                "cost_cny": metrics.get("cost_est_cny") if metrics.get("cost_est_cny") is not None else metrics.get("cost_cny"),
                 "duration_ms": metrics.get("duration_ms"),
                 "human_interventions": metrics.get("human_interventions"),
                 "turn_end_reason": metrics.get("turn_end_reason"),
@@ -196,7 +198,7 @@ def run_batch(tasks: list, backend: str = "claude", timeout_s: int = 300,
             print(f"  -> {mark} L{verdict['level']} ({verdict['level_source']}) "
                   f"tools={metrics.get('tool_calls_total')} "
                   f"end={metrics.get('turn_end_reason')} "
-                  f"cost_cny={metrics.get('cost_cny') or metrics.get('cost_est_cny')}")
+                  f"cost_cny={metrics.get('cost_est_cny') if metrics.get('cost_est_cny') is not None else metrics.get('cost_cny')}")
             if on_task:
                 on_task(task, result, verdict, i)
     elapsed = round(time.time() - started_wall, 1)
