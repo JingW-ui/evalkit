@@ -3,6 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square)
 ![GitHub stars](https://img.shields.io/github/stars/JingW-ui/evalkit?style=flat-square)
 ![GitHub last commit](https://img.shields.io/github/last-commit/JingW-ui/evalkit?style=flat-square)
+![License](https://img.shields.io/github/license/JingW-ui/evalkit?style=flat-square)
 
 面向「远程 Windows PC 自动化」领域的 Agent 能力评测工具：以一整套 L1-L4 能力卷为题库，
 **跑测 → 机器预判（确定性规则 + LLM 判结论）→ 统计总览 → 人工复核/答辩**。
