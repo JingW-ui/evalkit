@@ -158,8 +158,14 @@ class EvalStore:
         return recs
 
     def matrix(self) -> dict:
-        """能力画像（agent×L1-L4 SR + 平均指标）+ 明细列表（口径与旧 JSON 版一致）。"""
-        recs = self.all()
+        """能力画像（agent×L1-L4 SR + 平均指标）+ 明细列表。
+
+        与 stats() 同口径：只统计 task_id 在 tasks 表里的记录（孤儿记录不进画像），
+        排除 review_status == 'invalid'。
+        """
+        task_map = {t["task_id"]: t for t in self.list_tasks()}
+        recs = [r for r in self.all()
+                if r.get("task_id") in task_map and r.get("review_status") != "invalid"]
         cells = {}
         for r in recs:
             key = (r.get("agent"), r.get("level"))

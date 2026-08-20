@@ -7,20 +7,35 @@ const fmtTime = ms => ms ? new Date(ms).toLocaleTimeString() : '—'
 const fmtTok = n => n == null ? '—' : n.toLocaleString()
 export const KIND_LABEL = { input: 'Input', model: 'Model', tool: 'Tool', mcp: 'MCP', skill: 'Skill' }
 
+// 图片/二进制数据判定：不加载显示，只给占位（避免 base64 刷屏）
+const looksLikeImage = s => {
+  if (!s || typeof s !== 'string') return false
+  if (s.startsWith('data:image/')) return true
+  // 单行超长 base64（无换行、长度 >20k、前段全是 base64 字符）
+  if (s.length > 20000 && !s.includes('\n') && /^[A-Za-z0-9+/=\s]+$/.test(s.slice(0, 256))) return true
+  return false
+}
+
 // 详情面板（对齐 DSH inspector：dl 概览 + 底条 tab + 内容区，右侧圆角悬浮卡片）
-export default function Inspector({ record, onClose }) {
+export default function Inspector({ record, events, onClose }) {
   // 每条新记录重置默认 tab：带技能列表的输入记录默认展示技能
   const [lastKey, setLastKey] = useState(null)
   const [dtab, setDtab] = useState(null)
+  const [full, setFull] = useState(null)   // 「展开完整」后回源的全量 {arguments, result}
   const key = record ? (record.eidx != null ? record.eidx : record.id) : null
   if (key !== lastKey) {
     setLastKey(key)
     setDtab(null)   // 换记录 → 回落到默认 tab（skills 优先）
+    setFull(null)   // 换记录 → 重置展开
   }
   if (!record) return null
   const d = record.detail || {}
   const usage = d.usage
   const payload = d.arguments != null ? d.arguments : d.text
+  const truncated = !!(d.result_truncated || d.args_truncated)
+  // 展开后的展示值：优先回源全量
+  const showPayload = full && full.arguments != null ? full.arguments : payload
+  const showResult = full && full.result != null ? full.result : (d.result ?? '(无结果)')
   const tabs = []
   if (payload) tabs.push(['payload', '输入'])
   if (d.result != null) tabs.push(['result', '输出'])
@@ -29,6 +44,21 @@ export default function Inspector({ record, onClose }) {
   // 默认 tab：带技能列表的输入记录优先展示技能（点击 user 输入即见技能下拉）；否则首个
   const preferred = d.skills ? 'skills' : null
   const active = tabs.some(t => t[0] === (dtab || preferred)) ? (dtab || preferred) : (tabs[0] ? tabs[0][0] : 'result')
+
+  function expandFull() {
+    let fullResult = null, fullArgs = null
+    for (const e of (events || [])) {
+      const dd = e.data || {}
+      if (e.type === 'tool/result' && dd.callId === record.callId) {
+        const c = dd.message?.content?.[0]?.content
+        if (typeof c === 'string') fullResult = c
+      } else if (e.type === 'tool/call' && dd.callId === record.callId) {
+        if (dd.arguments != null) fullArgs = dd.arguments
+      }
+    }
+    setFull({ arguments: fullArgs, result: fullResult })
+  }
+
   return (
     <aside className="inspector">
       <div className="inspector-head">
@@ -57,12 +87,22 @@ export default function Inspector({ record, onClose }) {
           <button key={id} className={`itab ${active === id ? 'active' : ''}`} onClick={() => setDtab(id)}>{label}</button>
         ))}
         {!tabs.length && <span className="iloc" style={{ alignSelf: 'center' }}>无详情</span>}
+        {truncated && !full && record.callId && (
+          <button className="ghost" onClick={expandFull} title="从原始事件回源取全量（大输出）">展开完整</button>
+        )}
+        {full && <span className="iloc" style={{ alignSelf: 'center' }}>已展开全量</span>}
       </div>
 
       <div className="inspector-body">
-        {active === 'payload' && <pre className="raw">{payload || ''}</pre>}
-        {active === 'result' && <pre className="raw">{d.result ?? '(无结果)'}</pre>}
-        {active === 'thinking' && <pre className="raw">{d.thinking}</pre>}
+        {active === 'payload' && (looksLikeImage(showPayload)
+          ? <div className="muted">（图片数据，不显示）</div>
+          : <pre className="raw">{showPayload || ''}</pre>)}
+        {active === 'result' && (looksLikeImage(showResult)
+          ? <div className="muted">（图片数据，不显示）</div>
+          : <pre className="raw">{showResult}</pre>)}
+        {active === 'thinking' && (looksLikeImage(d.thinking)
+          ? <div className="muted">（图片数据，不显示）</div>
+          : <pre className="raw">{d.thinking}</pre>)}
         {active === 'skills' && (
           <div className="skill-list">
             {d.skills.map((s, i) => (

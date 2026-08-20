@@ -59,7 +59,9 @@ function ToolNode({ tc, onInspect }) {
           onClick={() => onInspect && onInspect({
             kind: 'tool', name: tc.name, isError: tc.ok === false,
             dur: tc.dur_ms, start: tc.call_ms, seq: null,
-            detail: { arguments: tc.args, result: tc.result },
+            callId: tc.callId,
+            detail: { arguments: tc.args, result: tc.result,
+                      args_truncated: tc.args_truncated, result_truncated: tc.result_truncated },
           })}>
       <span className="tc-name">{esc(tc.name)}</span>
       {tc.dur_ms != null && <span className="tc-dur">{tc.dur_ms}ms</span>}

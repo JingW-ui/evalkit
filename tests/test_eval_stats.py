@@ -51,6 +51,19 @@ with tempfile.TemporaryDirectory() as td:
     check("cost σ=0.2", abs(row["cost_sd"] - 0.2) < 0.001, f"实际 {row['cost_sd']}")
     check("tool_sr 均值≈0.767", abs(row["tool_sr"] - 0.7667) < 0.001, f"实际 {row['tool_sr']}")
 
+    # matrix 与 stats 同口径：孤儿记录（task_id 不在 tasks 表）不进画像
+    s.upsert({"session_id": "orphan-r0", "task_id": "g1", "run_idx": 0, "agent": "claude",
+              "level": "L3", "success": False,
+              "tool_calls_total": 1, "tool_success": 0, "tool_fail": 1,
+              "input_tokens": 100, "cost_cny": 0.1, "duration_ms": 10,
+              "human_interventions": 0, "turn_end_reason": "error", "_at": 4})
+    m = s.matrix()
+    ids = [r.get("task_id") for r in m["records"]]
+    check("matrix 排除孤儿记录", "g1" not in ids, f"实际 {ids}")
+    p3 = next(p for p in m["portrait"] if p["level"] == "L3")
+    check("matrix 画像不计孤儿", p3["count"] == 3 and p3["success"] == 2,
+          f"实际 count={p3['count']} ok={p3['success']}")
+
     # review：修正 level/success 留痕
     r = s.review("t1-r2", level="L2", success=True, note="人工修正：实际成功")
     check("review 修正 level", r["level"] == "L2", f"实际 {r['level']}")

@@ -312,7 +312,7 @@ export default function App() {
         )}
       </main>
       {/* 全局详情面板（右侧圆角悬浮，轨迹/任务工具链触发） */}
-      {inspector && <Inspector record={inspector} onClose={() => setInspector(null)} />}
+      {inspector && <Inspector record={inspector} events={view.events} onClose={() => setInspector(null)} />}
     </div>
   )
 }

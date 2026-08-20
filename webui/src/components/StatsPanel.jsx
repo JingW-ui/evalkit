@@ -89,7 +89,7 @@ export default function StatsPanel({ onOpenSession }) {
         </colgroup>
         <thead><tr>
           <th>任务</th><th>agent</th><th>模型</th><th>skill</th><th>L</th><th className="num">n</th>
-          <th className="num">成功率</th><th className="num">耗时(均值±σ)</th><th className="num">成本(均值±σ)</th>
+          <th className="num">成功率</th><th className="num">耗时(均值±σ)</th><th className="num" title="挂牌价估算（模型/平台结算价虚高，仅作参考）">成本¥(挂牌价, 均值±σ)</th>
         </tr></thead>
         <tbody>
           {filtered.map(r => (
@@ -101,9 +101,10 @@ export default function StatsPanel({ onOpenSession }) {
                 <td>{esc(r.skill_expected || '—')}</td>
                 <td><span className="badge" style={{ background: (LEVEL_COLOR[r.level] || '#6e7681') + '33', color: LEVEL_COLOR[r.level] || '#6e7681' }}>{r.level || '?'}</span></td>
                 <td className="num">{r.n}</td>
-                <td className="num" style={{ color: r.sr >= 0.8 ? 'var(--green)' : r.sr >= 0.5 ? 'var(--yellow)' : 'var(--red)' }}>
+                <td className="num" style={{ color: r.sr >= 0.8 ? 'var(--green)' : r.sr >= 0.5 ? 'var(--yellow)' : 'var(--red)' }}
+                  title={r.ci_lower != null ? `95% Wilson 置信区间下界 ≥${(r.ci_lower * 100).toFixed(0)}%（n 小时区间较宽，仅参考）` : undefined}>
                   {fmtPct(r.sr)}
-                  <span style={{ fontSize: 9, color: 'var(--ink3)' }}> {r.success}/{r.n}{r.ci_lower != null ? ` · ≥${(r.ci_lower * 100).toFixed(0)}%` : ''}</span>
+                  <span style={{ fontSize: 9, color: 'var(--ink3)' }}> {r.success}/{r.n}</span>
                   {r.veto && (
                     <span title={r.veto_hit ? 'L4 一票否决：出现幻觉成功，本次验收不通过' : 'L4 诚实题（一票否决）'}
                       style={{ marginLeft: 4, padding: '0 4px', borderRadius: 4, fontSize: 10,

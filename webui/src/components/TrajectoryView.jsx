@@ -105,9 +105,10 @@ export function deriveModel(events) {
         }
         return
       }
-      const text = isUser
-        ? (d.content || []).filter(b => b && b.type === 'text').map(b => b.text || '').join('').slice(0, 300) || '(输入)'
-        : `${(d.header?.tools || []).length} tools · ${d.header?.model || ''}`
+      const fullText = isUser
+        ? (d.content || []).filter(b => b && b.type === 'text').map(b => b.text || '').join('') || '(输入)'
+        : ''
+      const label = isUser ? fullText.slice(0, 300) : `${(d.header?.tools || []).length} tools · ${d.header?.model || ''}`
       // 跨轮次等待：上一条非 user 事件 → 本次用户输入之间的长间隙（>30s）并入 input 泳道
       if (isUser && lastEvtAt != null && time - lastEvtAt > 30000) {
         const wait = { id: records.length, eidx: -1, seq: '·',
@@ -119,10 +120,10 @@ export function deriveModel(events) {
       const rec = { id: records.length, eidx, seq: e.seq != null ? e.seq : eidx,
                     lane: 0, start: time, end: time, dur: 1,   // 用户输入零宽点（DSH 口径）
                     name: isUser ? 'user' : 'system',
-                    label: text,
+                    label,
                     isError: false,
                     kind: isUser ? 'input-user' : 'input-sys',
-                    detail: { text, skills: undefined } }
+                    detail: { text: fullText, skills: undefined } }
       records.push(rec); lanes[0].push(rec)
       if (isUser) {
         lastEvtAt = null            // 用户输入到达，等待结束
@@ -130,9 +131,10 @@ export function deriveModel(events) {
       } else if (lastEvtAt == null || time > lastEvtAt) lastEvtAt = time
     } else if (t === 'assistant/message') {
       const blocks = d.message?.content || []
-      const text = blocks.filter(b => b.type === 'text').map(b => b.text || '').join('').slice(0, 300)
-      const thinking = blocks.filter(b => b.type === 'reasoning' || b.type === 'thinking')
-        .map(b => b.text || '').join('').slice(0, 1200)
+      const fullText = blocks.filter(b => b.type === 'text').map(b => b.text || '').join('')
+      const fullThinking = blocks.filter(b => b.type === 'reasoning' || b.type === 'thinking')
+        .map(b => b.text || '').join('')
+      const label = fullText.slice(0, 300) || (blocks.length && blocks.every(b => b.type === 'tool_use') ? '(调用工具)' : '(assistant)')
       // 模型思考块（DSH 口径）：start=上一活动结束（user/工具 result/上一条消息），
       // end=本条消息到达 → 思考时段被覆盖，与工具块首尾相接、时间线无缝。
       // 若下一条事件是同轮 tool/call（模型同一段输出的调用发出），end 延伸覆盖到调用时刻。
@@ -143,10 +145,10 @@ export function deriveModel(events) {
       const rec = { id: records.length, eidx, seq: e.seq != null ? e.seq : eidx,
                     lane: 1, start, end, dur: Math.max(1, end - start),
                     name: 'model',
-                    label: text || (blocks.length && blocks.every(b => b.type === 'tool_use') ? '(调用工具)' : '(assistant)'),
+                    label,
                     isError: false,
                     kind: 'model',
-                    detail: { text, thinking: thinking || undefined, usage: d.message?.usage } }
+                    detail: { text: fullText, thinking: fullThinking || undefined, usage: d.message?.usage } }
       records.push(rec); lanes[1].push(rec)
       lastActivityAt = end   // 消息完成（若紧跟 tool/call，工具块从此刻起，首尾相接）
       if (lastEvtAt == null || time > lastEvtAt) lastEvtAt = time
