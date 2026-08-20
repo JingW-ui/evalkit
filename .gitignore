@@ -17,7 +17,7 @@ webui/node_modules/
 webui/dist/
 webui/.vite/
 
-# 临时/调试脚本
+# 临时/调试脚本（根目录 tmp_*.py 才忽略；tmp/ 目录脚本入库）
 tmp_*.py
 check_*.py
 verify_*.py
@@ -33,3 +33,6 @@ settings.local.json
 # 本地/草稿文档（不入库）
 docx/题库设计.md
 docx/agent评测系统_开发说明.md
+
+# Playwright 运行时工作目录（截图快照/控制台日志）
+.playwright-cli/
